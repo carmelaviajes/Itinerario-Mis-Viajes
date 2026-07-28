@@ -7,18 +7,52 @@ import {
 } from "lucide-react";
 
 const C = {
-  platinum: "#E2E2DC", bg: "#F6F5F1", silverSand: "#BDC6C7", wheat: "#E6CEA1",
-  lightBeige: "#CCA770", copper: "#AF7A38", ink: "#2B3B3C", inkSoft: "#5C6664", card: "#FFFFFF",
+  platinum: "#D9E6E2", bg: "#F5EEDD", silverSand: "#AFC9CE", wheat: "#DCC8AA",
+  lightBeige: "#4F8577", copper: "#1E5A6E", ink: "#0D2B45", inkSoft: "#4B6572", card: "#FFFFFF",
 };
 
+const FONT_SCRIPT = "'Mr Leopolde', 'Georgia', serif";
+
 const TYPE_STYLES = {
-  flight: { icon: Plane, label: "Vuelo", accent: "#AF7A38" },
-  hotel: { icon: BedDouble, label: "Alojamiento", accent: "#8A6B3E" },
-  transport: { icon: Bus, label: "Transporte", accent: "#5F7679" },
-  activity: { icon: Ticket, label: "Actividad", accent: "#9C7A2E" },
+  flight: { icon: Plane, label: "Vuelo", accent: "#1E5A6E" },
+  hotel: { icon: BedDouble, label: "Alojamiento", accent: "#0D2B45" },
+  transport: { icon: Bus, label: "Transporte", accent: "#4F8577" },
+  activity: { icon: Ticket, label: "Actividad", accent: "#A8814A" },
 };
 
 const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+
+/* ---------- Identidad: fuente y logo ---------- */
+
+function GlobalFonts() {
+  return (
+    <style>{`
+      @font-face {
+        font-family: 'Mr Leopolde';
+        src: url('/assets/fonts/Mr_Leopolde.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+        font-display: swap;
+      }
+    `}</style>
+  );
+}
+
+/* Isotipo: avión con estela curva. Un solo componente para no repetir el
+   SVG en cada pantalla ("el logo en todos lados" pero desde un solo lugar). */
+function LogoMark({ size = 32, background = "none" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+      {background !== "none" && <rect width="200" height="200" rx="40" fill={background} />}
+      <path d="M 26 176 Q 46 96 118 70 Q 82 112 40 142 Z" fill="#4F8577" />
+      <path d="M 162 46 L 38 118 L 100 100 Z" fill="#DCEAE6" />
+      <path d="M 162 46 L 100 100 L 86 156 Z" fill="#1E5A6E" />
+      <path d="M 100 100 L 86 156 L 108 128 Z" fill="#DCC8AA" />
+      <path d="M 162 46 L 100 100 L 86 156" fill="none" stroke="#0D2B45" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M 162 46 L 38 118 L 100 100 Z" fill="none" stroke="#0D2B45" strokeWidth="2" strokeLinejoin="round" opacity="0.25" />
+    </svg>
+  );
+}
 
 /* ---------- Cache offline (solo lectura) ---------- */
 /* Guardamos la última respuesta buena de Supabase en localStorage. Si el
@@ -199,9 +233,9 @@ function AuthScreen() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: C.bg }}>
-      <div className="flex items-center gap-2 mb-8">
-        <Compass size={22} color={C.copper} />
-        <span className="text-[11px] font-semibold tracking-[0.3em] uppercase" style={{ color: C.inkSoft }}>
+      <div className="flex items-center gap-3 mb-8">
+        <LogoMark size={34} />
+        <span className="text-[32px] leading-none" style={{ fontFamily: FONT_SCRIPT, color: C.ink }}>
           Itinerario
         </span>
       </div>
@@ -350,14 +384,17 @@ function TripsHome({ user, onOpenTrip }) {
 
   return (
     <div className="min-h-screen" style={{ background: C.bg }}>
-      <header className="px-5 pt-6 pb-5 flex items-center justify-between">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.2em] mb-0.5" style={{ color: C.inkSoft }}>
-            Hola, {user.user_metadata?.display_name || user.email}
+      <header className="px-5 pt-6 pb-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <LogoMark size={22} />
+            <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: C.inkSoft }}>
+              Hola, {user.user_metadata?.display_name || user.email}
+            </span>
           </div>
-          <h1 className="text-[26px]" style={{ fontFamily: "Georgia, serif", color: C.ink }}>Tus viajes</h1>
+          <button onClick={() => supabase.auth.signOut()} style={{ color: C.inkSoft }}><LogOut size={18} /></button>
         </div>
-        <button onClick={() => supabase.auth.signOut()} style={{ color: C.inkSoft }}><LogOut size={18} /></button>
+        <h1 className="text-[46px] leading-none" style={{ fontFamily: FONT_SCRIPT, color: C.ink }}>Mis viajes</h1>
       </header>
 
       <OfflineBanner show={offline} />
@@ -545,9 +582,10 @@ function TripView({ tripId, onBack }) {
       <header className="px-5 pt-6 pb-4" style={{ borderBottom: `1px solid ${C.platinum}` }}>
         <div className="flex items-center justify-between mb-2">
           <button onClick={onBack} style={{ color: C.inkSoft }}><ArrowLeft size={18} /></button>
+          <LogoMark size={20} />
         </div>
-        <h1 className="text-[24px]" style={{ fontFamily: "Georgia, serif", color: C.ink }}>{trip.name}</h1>
-        <p className="text-[12px] mt-0.5" style={{ color: C.inkSoft }}>de {trip.owner_name}</p>
+        <h1 className="text-[36px] leading-none" style={{ fontFamily: FONT_SCRIPT, color: C.ink }}>{trip.name}</h1>
+        <p className="text-[12px] mt-1.5" style={{ color: C.inkSoft }}>de {trip.owner_name}</p>
 
         {(destinations.length > 0 || dateRangeLabel) && (
           <div className="mt-3 flex flex-col gap-1.5 rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
@@ -929,11 +967,21 @@ export default function App() {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  let content;
   if (session === undefined) {
-    return <div className="min-h-screen flex items-center justify-center" style={{ background: C.bg }}><Loader2 className="animate-spin" color={C.copper} /></div>;
+    content = <div className="min-h-screen flex items-center justify-center" style={{ background: C.bg }}><Loader2 className="animate-spin" color={C.copper} /></div>;
+  } else if (!session) {
+    content = <AuthScreen />;
+  } else if (tripId) {
+    content = <TripView tripId={tripId} onBack={() => setTripId(null)} />;
+  } else {
+    content = <TripsHome user={session.user} onOpenTrip={setTripId} />;
   }
-  if (!session) return <AuthScreen />;
 
-  if (tripId) return <TripView tripId={tripId} onBack={() => setTripId(null)} />;
-  return <TripsHome user={session.user} onOpenTrip={setTripId} />;
+  return (
+    <>
+      <GlobalFonts />
+      {content}
+    </>
+  );
 }
