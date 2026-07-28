@@ -6,18 +6,28 @@ import {
   Paperclip, FileText, Image as ImageIcon, AlertCircle, Trash2,
 } from "lucide-react";
 
+/* Paleta de marca "itinerario · mis viajes":
+   navy #0A2C47, teal #1A657B, sage #B5D7C5, cream #F5EDDE, white #FFFFFF.
+   Se mantienen los mismos nombres de token para no tocar los ~100 usos en
+   el resto del archivo; lo que cambia es a qué color de marca apunta cada uno. */
 const C = {
-  platinum: "#D9E6E2", bg: "#F5EEDD", silverSand: "#AFC9CE", wheat: "#DCC8AA",
-  lightBeige: "#4F8577", copper: "#1E5A6E", ink: "#0D2B45", inkSoft: "#4B6572", card: "#FFFFFF",
+  bg: "#F5EDDE",          // cream — fondo de pantalla
+  card: "#FFFFFF",        // white — superficies (cards, modales)
+  platinum: "#B5D7C5",    // sage — bordes y divisores punteados
+  wheat: "#E4EFE9",       // tint claro de sage — fondos secundarios (banner, botón "Unirme")
+  lightBeige: "#1A657B",  // teal — íconos y acentos secundarios
+  copper: "#0A2C47",      // navy — acción principal (botones, día seleccionado)
+  ink: "#0A2C47",         // navy — texto principal
+  inkSoft: "#1A657B",     // teal — texto secundario / labels
 };
 
 const FONT_SCRIPT = "'Mr Leopolde', 'Georgia', serif";
 
 const TYPE_STYLES = {
-  flight: { icon: Plane, label: "Vuelo", accent: "#1E5A6E" },
-  hotel: { icon: BedDouble, label: "Alojamiento", accent: "#0D2B45" },
-  transport: { icon: Bus, label: "Transporte", accent: "#4F8577" },
-  activity: { icon: Ticket, label: "Actividad", accent: "#A8814A" },
+  flight: { icon: Plane, label: "Vuelo", accent: "#1A657B" },
+  hotel: { icon: BedDouble, label: "Alojamiento", accent: "#0A2C47" },
+  transport: { icon: Bus, label: "Transporte", accent: "#6B9C8F" },
+  activity: { icon: Ticket, label: "Actividad", accent: "#B99B6B" },
 };
 
 const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -38,19 +48,47 @@ function GlobalFonts() {
   );
 }
 
-/* Isotipo: avión con estela curva. Un solo componente para no repetir el
-   SVG en cada pantalla ("el logo en todos lados" pero desde un solo lugar). */
+/* Isotipo de marca: avión de papel navy con estela curva sage, subiendo en
+   diagonal. Un solo componente para no repetir el SVG en cada pantalla.
+   background="none" para uso suelto (headers); pasar un color de fondo
+   (ej. C.ink) para el ícono cuadrado tipo app icon. */
 function LogoMark({ size = 32, background = "none" }) {
   return (
     <svg width={size} height={size} viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
-      {background !== "none" && <rect width="200" height="200" rx="40" fill={background} />}
-      <path d="M 26 176 Q 46 96 118 70 Q 82 112 40 142 Z" fill="#4F8577" />
-      <path d="M 162 46 L 38 118 L 100 100 Z" fill="#DCEAE6" />
-      <path d="M 162 46 L 100 100 L 86 156 Z" fill="#1E5A6E" />
-      <path d="M 100 100 L 86 156 L 108 128 Z" fill="#DCC8AA" />
-      <path d="M 162 46 L 100 100 L 86 156" fill="none" stroke="#0D2B45" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d="M 162 46 L 38 118 L 100 100 Z" fill="none" stroke="#0D2B45" strokeWidth="2" strokeLinejoin="round" opacity="0.25" />
+      {background !== "none" && <rect width="200" height="200" rx="44" fill={background} />}
+      {/* Estela */}
+      <path
+        d="M 30 150 Q 55 90 130 60"
+        fill="none"
+        stroke="#B5D7C5"
+        strokeWidth="10"
+        strokeLinecap="round"
+      />
+      {/* Avión */}
+      <path
+        d="M 176 40 L 96 96 L 60 84 L 50 94 L 82 108 L 68 138 L 78 146 L 100 118 L 176 40 Z"
+        fill="#0A2C47"
+      />
     </svg>
+  );
+}
+
+/* Lockup horizontal de marca: isotipo + "itinerario" en script + "MIS VIAJES"
+   en versalitas separadas por puntos, tal cual el manual de marca. */
+function BrandLockup({ iconSize = 34, scriptSize = 32 }) {
+  return (
+    <div className="flex items-center gap-3">
+      <LogoMark size={iconSize} />
+      <div className="h-10 border-l" style={{ borderColor: C.platinum, borderStyle: "dotted", borderLeftWidth: 2 }} />
+      <div className="flex flex-col">
+        <span className="leading-none" style={{ fontFamily: FONT_SCRIPT, fontSize: scriptSize, color: C.ink }}>
+          itinerario
+        </span>
+        <span className="text-[10px] font-semibold tracking-[0.3em] mt-1" style={{ color: C.platinum }}>
+          · MIS VIAJES ·
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -233,11 +271,8 @@ function AuthScreen() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6" style={{ background: C.bg }}>
-      <div className="flex items-center gap-3 mb-8">
-        <LogoMark size={34} />
-        <span className="text-[32px] leading-none" style={{ fontFamily: FONT_SCRIPT, color: C.ink }}>
-          Itinerario
-        </span>
+      <div className="mb-8">
+        <BrandLockup />
       </div>
 
       <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-[0_8px_24px_rgba(43,59,60,0.12)]" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
