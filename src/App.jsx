@@ -20,6 +20,32 @@ const TYPE_STYLES = {
 
 const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
+/* ---------- Cache offline (solo lectura) ---------- */
+/* Guardamos la última respuesta buena de Supabase en localStorage. Si el
+   fetch siguiente falla (sin conexión), mostramos esa última copia y
+   avisamos con un banner. No hay escritura offline: crear/editar/unirse
+   sigue necesitando conexión. */
+const OFFLINE_PREFIX = "itinerario:cache:";
+const readCache = (key) => {
+  try {
+    const raw = localStorage.getItem(OFFLINE_PREFIX + key);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+};
+const writeCache = (key, value) => {
+  try { localStorage.setItem(OFFLINE_PREFIX + key, JSON.stringify(value)); } catch { /* storage llena o no disponible */ }
+};
+
+function OfflineBanner({ show }) {
+  if (!show) return null;
+  return (
+    <div className="mx-5 mb-3 flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-medium"
+      style={{ background: C.wheat, color: C.ink }}>
+      <WifiOff size={14} /> Sin conexión — mostrando la última versión guardada.
+    </div>
+  );
+}
+
 /* ---------- Componentes compartidos: Toast y Modal ---------- */
 
 function Toast({ toast, onClose }) {
@@ -222,6 +248,7 @@ function AuthScreen() {
 function TripsHome({ user, onOpenTrip }) {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [showJoin, setShowJoin] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -230,14 +257,29 @@ function TripsHome({ user, onOpenTrip }) {
   const [deleting, setDeleting] = useState(false);
 
   const notify = (message, type = "error") => setToast({ message, type });
+  const cacheKey = `trips:${user.id}`;
 
   const loadTrips = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("trip_members")
-      .select("trip_id, trips(id, name, owner_name, date_range)")
-      .eq("user_id", user.id);
-    if (!error) setTrips((data || []).map((r) => r.trips).filter(Boolean));
+    try {
+      const { data, error } = await supabase
+        .from("trip_members")
+        .select("trip_id, trips(id, name, owner_name, date_range)")
+        .eq("user_id", user.id);
+      if (error) throw error;
+      const list = (data || []).map((r) => r.trips).filter(Boolean);
+      setTrips(list);
+      setOffline(false);
+      writeCache(cacheKey, list);
+    } catch (err) {
+      const cached = readCache(cacheKey);
+      if (cached) {
+        setTrips(cached);
+        setOffline(true);
+      } else {
+        notify("No pudimos cargar tus viajes y todavía no hay una copia guardada para ver sin conexión.");
+      }
+    }
     setLoading(false);
   };
 
@@ -318,6 +360,8 @@ function TripsHome({ user, onOpenTrip }) {
         <button onClick={() => supabase.auth.signOut()} style={{ color: C.inkSoft }}><LogOut size={18} /></button>
       </header>
 
+      <OfflineBanner show={offline} />
+
       <main className="px-5 flex flex-col gap-3">
         {loading && <div className="flex items-center gap-2 text-[13px]" style={{ color: C.inkSoft }}><Loader2 size={14} className="animate-spin" /> Cargando...</div>}
         {!loading && trips.length === 0 && (
@@ -336,7 +380,8 @@ function TripsHome({ user, onOpenTrip }) {
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); setTripToDelete(t); }}
-              className="px-3 self-stretch flex items-center"
+              disabled={offline}
+              className="px-3 self-stretch flex items-center disabled:opacity-30"
               style={{ color: C.inkSoft, borderLeft: `1px solid ${C.platinum}` }}
               aria-label="Eliminar viaje"
             >
@@ -346,13 +391,19 @@ function TripsHome({ user, onOpenTrip }) {
         ))}
 
         <div className="flex gap-2 mt-2">
-          <button onClick={() => setShowCreate(true)} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold text-white py-3 rounded-xl" style={{ background: C.copper }}>
+          <button onClick={() => setShowCreate(true)} disabled={offline} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold text-white py-3 rounded-xl disabled:opacity-40" style={{ background: C.copper }}>
             <Plus size={15} /> Nuevo viaje
           </button>
-          <button onClick={() => setShowJoin((v) => !v)} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl" style={{ background: C.wheat, color: C.ink }}>
+          <button onClick={() => setShowJoin((v) => !v)} disabled={offline} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl disabled:opacity-40" style={{ background: C.wheat, color: C.ink }}>
             <Users size={15} /> Unirme con código
           </button>
         </div>
+
+        {offline && (
+          <p className="text-[11px] text-center" style={{ color: C.inkSoft }}>
+            Crear viajes, unirte con código y eliminar necesitan conexión.
+          </p>
+        )}
 
         {showJoin && (
           <div className="rounded-xl p-4 flex gap-2 items-center" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
@@ -435,20 +486,37 @@ function TripView({ tripId, onBack }) {
   const [days, setDays] = useState([]);
   const [selectedDay, setSelectedDay] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [offline, setOffline] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const cacheKey = `trip:${tripId}`;
+
   const load = async () => {
     setLoading(true);
-    const { data: t } = await supabase.from("trips").select("*").eq("id", tripId).single();
-    const { data: d } = await supabase
-      .from("trip_days")
-      .select("*, trip_items(*)")
-      .eq("trip_id", tripId)
-      .order("day_number");
-    setTrip(t);
-    setDays(d || []);
-    if (d?.length && !selectedDay) setSelectedDay(d[0].day_number);
+    try {
+      const { data: t, error: tErr } = await supabase.from("trips").select("*").eq("id", tripId).single();
+      if (tErr) throw tErr;
+      const { data: d, error: dErr } = await supabase
+        .from("trip_days")
+        .select("*, trip_items(*)")
+        .eq("trip_id", tripId)
+        .order("day_number");
+      if (dErr) throw dErr;
+      setTrip(t);
+      setDays(d || []);
+      setOffline(false);
+      if (d?.length && !selectedDay) setSelectedDay(d[0].day_number);
+      writeCache(cacheKey, { trip: t, days: d || [] });
+    } catch (err) {
+      const cached = readCache(cacheKey);
+      if (cached) {
+        setTrip(cached.trip);
+        setDays(cached.days);
+        setOffline(true);
+        if (cached.days?.length && !selectedDay) setSelectedDay(cached.days[0].day_number);
+      }
+    }
     setLoading(false);
   };
 
@@ -511,6 +579,8 @@ function TripView({ tripId, onBack }) {
         </div>
       </header>
 
+      <OfflineBanner show={offline} />
+
       <div className="flex gap-2 px-5 py-4 overflow-x-auto" style={{ borderBottom: `1px solid ${C.platinum}` }}>
         {days.map((d) => (
           <button key={d.day_number} onClick={() => setSelectedDay(d.day_number)}
@@ -535,18 +605,90 @@ function TripView({ tripId, onBack }) {
             </div>
           </>
         )}
-        <button onClick={() => setShowAdd(true)} className="mt-4 w-full flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl" style={{ background: C.wheat, color: C.ink }}>
+        <button onClick={() => setShowAdd(true)} disabled={offline} className="mt-4 w-full flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl disabled:opacity-40" style={{ background: C.wheat, color: C.ink }}>
           <Plus size={15} /> Agregar reserva
         </button>
-        <div className="mt-4 flex items-center gap-2 text-[11px]" style={{ color: C.inkSoft }}>
-          <Check size={13} /> Sincronizado con Supabase.
-        </div>
+        {offline ? (
+          <div className="mt-4 flex items-center gap-2 text-[11px]" style={{ color: C.inkSoft }}>
+            <WifiOff size={13} /> Viendo la copia guardada del {trip.name}; agregar reservas necesita conexión.
+          </div>
+        ) : (
+          <div className="mt-4 flex items-center gap-2 text-[11px]" style={{ color: C.inkSoft }}>
+            <Check size={13} /> Sincronizado con Supabase.
+          </div>
+        )}
       </main>
     </div>
   );
 }
 
 /* ---------- AddItem ---------- */
+
+/* Campos específicos por tipo de reserva. Cada uno arma su propio arreglo de
+   { label, value } que termina en trip_items.meta, así que TicketCard no
+   necesita cambios: ya sabe renderizar cualquier lista de meta. */
+function useTypeFields(type) {
+  const [airline, setAirline] = useState("");
+  const [departureTime, setDepartureTime] = useState("");
+  const [arrivalTime, setArrivalTime] = useState("");
+  const [boardingTime, setBoardingTime] = useState("");
+  const [hasConnection, setHasConnection] = useState(false);
+  const [connectionDetail, setConnectionDetail] = useState("");
+  const [baggageIncluded, setBaggageIncluded] = useState("no_especificado");
+  const [checkinDone, setCheckinDone] = useState(false);
+
+  const [checkInDateTime, setCheckInDateTime] = useState("");
+  const [checkOutDateTime, setCheckOutDateTime] = useState("");
+  const [roomType, setRoomType] = useState("");
+
+  const [operator, setOperator] = useState("");
+  const [seat, setSeat] = useState("");
+
+  const [activityTime, setActivityTime] = useState("");
+  const [duration, setDuration] = useState("");
+  const [meetingPoint, setMeetingPoint] = useState("");
+
+  const buildMeta = () => {
+    const meta = [];
+    if (type === "flight") {
+      if (airline) meta.push({ label: "Aerolínea", value: airline });
+      if (departureTime) meta.push({ label: "Salida", value: departureTime });
+      if (arrivalTime) meta.push({ label: "Llegada", value: arrivalTime });
+      if (boardingTime) meta.push({ label: "Embarque", value: boardingTime });
+      meta.push({ label: "Escalas", value: hasConnection ? (connectionDetail || "Sí") : "Directo" });
+      if (baggageIncluded !== "no_especificado") {
+        meta.push({ label: "Equipaje incluido", value: baggageIncluded === "si" ? "Sí" : "No" });
+      }
+      meta.push({ label: "Check-in", value: checkinDone ? "Hecho" : "Pendiente" });
+    } else if (type === "hotel") {
+      if (checkInDateTime) meta.push({ label: "Check-in", value: checkInDateTime });
+      if (checkOutDateTime) meta.push({ label: "Check-out", value: checkOutDateTime });
+      if (roomType) meta.push({ label: "Habitación", value: roomType });
+    } else if (type === "transport") {
+      if (operator) meta.push({ label: "Empresa", value: operator });
+      if (departureTime) meta.push({ label: "Salida", value: departureTime });
+      if (arrivalTime) meta.push({ label: "Llegada", value: arrivalTime });
+      if (seat) meta.push({ label: "Asiento", value: seat });
+    } else if (type === "activity") {
+      if (activityTime) meta.push({ label: "Hora", value: activityTime });
+      if (duration) meta.push({ label: "Duración", value: duration });
+      if (meetingPoint) meta.push({ label: "Punto de encuentro", value: meetingPoint });
+    }
+    return meta;
+  };
+
+  return {
+    fields: {
+      airline, setAirline, departureTime, setDepartureTime, arrivalTime, setArrivalTime,
+      boardingTime, setBoardingTime, hasConnection, setHasConnection, connectionDetail, setConnectionDetail,
+      baggageIncluded, setBaggageIncluded, checkinDone, setCheckinDone,
+      checkInDateTime, setCheckInDateTime, checkOutDateTime, setCheckOutDateTime, roomType, setRoomType,
+      operator, setOperator, seat, setSeat,
+      activityTime, setActivityTime, duration, setDuration, meetingPoint, setMeetingPoint,
+    },
+    buildMeta,
+  };
+}
 
 function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
   const [dayMode, setDayMode] = useState("existing");
@@ -558,12 +700,13 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
   const [title, setTitle] = useState("");
   const [code, setCode] = useState("");
   const [mapsQuery, setMapsQuery] = useState("");
-  const [meta1Label, setMeta1Label] = useState("");
-  const [meta1Value, setMeta1Value] = useState("");
+  const [extraLabel, setExtraLabel] = useState("");
+  const [extraValue, setExtraValue] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const { fields: f, buildMeta } = useTypeFields(type);
 
   const notify = (message, type = "error") => setToast({ message, type });
 
@@ -594,8 +737,8 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
       }
     }
 
-    const meta = [];
-    if (meta1Label && meta1Value) meta.push({ label: meta1Label, value: meta1Value });
+    const meta = buildMeta();
+    if (extraLabel && extraValue) meta.push({ label: extraLabel, value: extraValue });
 
     const { error } = await supabase.from("trip_items").insert({
       day_id: dayId, type, source: source || "Manual", title: title.trim(),
@@ -650,9 +793,67 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
 
         <Field label="Título" value={title} onChange={setTitle} placeholder="Ej: Vuelo AR1130 a Madrid" />
         <Field label="Fuente" value={source} onChange={setSource} placeholder="Booking, Despegar, Airbnb..." />
+
+        {type === "flight" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
+            <div className="flex gap-2">
+              <Field label="Hora de salida" value={f.departureTime} onChange={f.setDepartureTime} placeholder="23:40" />
+              <Field label="Hora de llegada" value={f.arrivalTime} onChange={f.setArrivalTime} placeholder="14:10" />
+            </div>
+            <Field label="Hora de embarque" value={f.boardingTime} onChange={f.setBoardingTime} placeholder="23:00" />
+            <Toggle label="Tiene escala/conexión" checked={f.hasConnection} onChange={f.setHasConnection} />
+            {f.hasConnection && (
+              <Field label="Detalle de la escala" value={f.connectionDetail} onChange={f.setConnectionDetail} placeholder="Bogotá, 2h de espera" />
+            )}
+            <SelectField
+              label="¿Incluye valijas?"
+              value={f.baggageIncluded}
+              onChange={f.setBaggageIncluded}
+              options={[
+                { value: "no_especificado", label: "No especificado" },
+                { value: "si", label: "Sí" },
+                { value: "no", label: "No" },
+              ]}
+            />
+            <Toggle label="Check-in ya hecho" checked={f.checkinDone} onChange={f.setCheckinDone} />
+          </div>
+        )}
+
+        {type === "hotel" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <div className="flex gap-2">
+              <Field label="Check-in" value={f.checkInDateTime} onChange={f.setCheckInDateTime} placeholder="15:00" />
+              <Field label="Check-out" value={f.checkOutDateTime} onChange={f.setCheckOutDateTime} placeholder="11:00" />
+            </div>
+            <Field label="Tipo de habitación (opcional)" value={f.roomType} onChange={f.setRoomType} placeholder="Doble con balcón" />
+          </div>
+        )}
+
+        {type === "transport" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <Field label="Empresa / línea" value={f.operator} onChange={f.setOperator} placeholder="Flixbus, Renfe..." />
+            <div className="flex gap-2">
+              <Field label="Hora de salida" value={f.departureTime} onChange={f.setDepartureTime} placeholder="09:00" />
+              <Field label="Hora de llegada" value={f.arrivalTime} onChange={f.setArrivalTime} placeholder="12:30" />
+            </div>
+            <Field label="Asiento (opcional)" value={f.seat} onChange={f.setSeat} placeholder="14A" />
+          </div>
+        )}
+
+        {type === "activity" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <div className="flex gap-2">
+              <Field label="Hora" value={f.activityTime} onChange={f.setActivityTime} placeholder="10:00" />
+              <Field label="Duración (opcional)" value={f.duration} onChange={f.setDuration} placeholder="2h" />
+            </div>
+            <Field label="Punto de encuentro (opcional)" value={f.meetingPoint} onChange={f.setMeetingPoint} placeholder="Entrada principal" />
+          </div>
+        )}
+
         <div className="flex gap-2">
-          <Field label="Detalle (etiqueta)" value={meta1Label} onChange={setMeta1Label} placeholder="Check-in" />
-          <Field label="Valor" value={meta1Value} onChange={setMeta1Value} placeholder="15:00" />
+          <Field label="Otro detalle (opcional)" value={extraLabel} onChange={setExtraLabel} placeholder="Etiqueta" />
+          <Field label="Valor" value={extraValue} onChange={setExtraValue} placeholder="Valor" />
         </div>
         <Field label="Código de reserva" value={code} onChange={setCode} placeholder="Se genera solo si lo dejás vacío" />
         <Field label="Dirección para Maps" value={mapsQuery} onChange={setMapsQuery} placeholder="Hotel Atlántico Madrid, Gran Vía 38" />
@@ -680,6 +881,40 @@ function Field({ label, value, onChange, placeholder }) {
       <label className="block text-[10px] uppercase mb-1" style={{ color: C.inkSoft }}>{label}</label>
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
         className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }} />
+    </div>
+  );
+}
+
+function Toggle({ label, checked, onChange }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="flex items-center justify-between text-[13px] font-medium py-1"
+      style={{ color: C.ink }}
+    >
+      {label}
+      <span
+        className="relative inline-flex items-center rounded-full transition-colors"
+        style={{ width: 38, height: 22, background: checked ? C.copper : C.platinum }}
+      >
+        <span
+          className="absolute rounded-full bg-white transition-transform"
+          style={{ width: 18, height: 18, left: 2, transform: checked ? "translateX(16px)" : "translateX(0)" }}
+        />
+      </span>
+    </button>
+  );
+}
+
+function SelectField({ label, value, onChange, options }) {
+  return (
+    <div className="flex-1">
+      <label className="block text-[10px] uppercase mb-1" style={{ color: C.inkSoft }}>{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
     </div>
   );
 }
