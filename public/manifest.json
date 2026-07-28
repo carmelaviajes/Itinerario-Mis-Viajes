@@ -1,6 +1,6 @@
 {
   "name": "Itinerario · mis viajes",
-  "short_name": "Itinerario- Mis Viajes",
+  "short_name": "Itinerario Mis Viajes",
   "description": "Organizá y compartí el itinerario de tus viajes",
   "start_url": "/",
   "display": "standalone",
