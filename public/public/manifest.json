@@ -1,0 +1,14 @@
+{
+  "name": "itinerario · mis viajes",
+  "short_name": "itinerario",
+  "description": "Organizá y compartí el itinerario de tus viajes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5EDDE",
+  "theme_color": "#0A2C47",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
