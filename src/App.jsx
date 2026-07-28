@@ -75,42 +75,68 @@ function ConfirmModal({ open, title, message, confirmLabel = "Confirmar", danger
   );
 }
 
-function PromptModal({ open, title, label, initialValue = "", placeholder, confirmLabel = "Crear", onCancel, onConfirm }) {
-  const [value, setValue] = useState(initialValue);
+function NewTripModal({ open, onCancel, onConfirm }) {
+  const [name, setName] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [destinations, setDestinations] = useState("");
 
   useEffect(() => {
-    if (open) setValue(initialValue);
-  }, [open, initialValue]);
+    if (open) { setName(""); setStartDate(""); setEndDate(""); setDestinations(""); }
+  }, [open]);
 
   if (!open) return null;
 
+  const canSave = name.trim() && startDate && endDate && destinations.trim();
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(43,59,60,0.45)" }}>
-      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-[0_16px_40px_rgba(43,59,60,0.25)]" style={{ background: C.card }}>
-        <div className="px-6 pt-6 pb-5">
-          <h3 className="text-[17px] font-semibold mb-4" style={{ color: C.ink }}>{title}</h3>
-          <label className="block text-[10px] uppercase tracking-widest mb-1.5" style={{ color: C.inkSoft }}>{label}</label>
-          <input
-            autoFocus
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder={placeholder}
-            onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) onConfirm(value.trim()); }}
-            className="w-full text-[16px] pb-2 outline-none bg-transparent"
-            style={{ color: C.ink, borderBottom: `2px solid ${C.platinum}` }}
-          />
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-[0_16px_40px_rgba(43,59,60,0.25)] max-h-[85vh] flex flex-col" style={{ background: C.card }}>
+        <div className="px-6 pt-6 pb-2 overflow-y-auto flex flex-col gap-4">
+          <h3 className="text-[17px] font-semibold" style={{ color: C.ink }}>Nuevo viaje</h3>
+
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest mb-1.5" style={{ color: C.inkSoft }}>Nombre del viaje</label>
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Ej: Verano en Madrid"
+              className="w-full text-[15px] pb-2 outline-none bg-transparent" style={{ color: C.ink, borderBottom: `2px solid ${C.platinum}` }} />
+          </div>
+
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-[10px] uppercase tracking-widest mb-1.5" style={{ color: C.inkSoft }}>Fecha inicio</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
+                className="w-full text-[14px] pb-2 outline-none bg-transparent" style={{ color: C.ink, borderBottom: `2px solid ${C.platinum}` }} />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[10px] uppercase tracking-widest mb-1.5" style={{ color: C.inkSoft }}>Fecha fin</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
+                className="w-full text-[14px] pb-2 outline-none bg-transparent" style={{ color: C.ink, borderBottom: `2px solid ${C.platinum}` }} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest mb-1.5" style={{ color: C.inkSoft }}>Destinos (separados por coma)</label>
+            <input value={destinations} onChange={(e) => setDestinations(e.target.value)} placeholder="Ej: Madrid, Barcelona, Roma"
+              className="w-full text-[14px] pb-2 outline-none bg-transparent" style={{ color: C.ink, borderBottom: `2px solid ${C.platinum}` }} />
+            <p className="text-[11px] mt-1.5" style={{ color: C.inkSoft }}>Se van a repartir entre los días del viaje, en el orden en que los escribís.</p>
+          </div>
         </div>
-        <div className="flex items-center justify-end gap-2 px-6 py-3" style={{ borderTop: `2px dashed ${C.platinum}`, background: C.bg }}>
+        <div className="flex items-center justify-end gap-2 px-6 py-3 mt-2" style={{ borderTop: `2px dashed ${C.platinum}`, background: C.bg }}>
           <button onClick={onCancel} className="text-[13px] font-semibold px-4 py-2 rounded-full" style={{ color: C.inkSoft }}>
             Cancelar
           </button>
           <button
-            onClick={() => value.trim() && onConfirm(value.trim())}
-            disabled={!value.trim()}
+            onClick={() => canSave && onConfirm({
+              name: name.trim(),
+              startDate,
+              endDate,
+              destinations: destinations.split(",").map((d) => d.trim()).filter(Boolean),
+            })}
+            disabled={!canSave}
             className="text-[13px] font-semibold text-white px-4 py-2 rounded-full disabled:opacity-40"
             style={{ background: C.copper }}
           >
-            {confirmLabel}
+            Crear viaje
           </button>
         </div>
       </div>
@@ -217,16 +243,36 @@ function TripsHome({ user, onOpenTrip }) {
 
   useEffect(() => { loadTrips(); }, []);
 
-  const confirmCreateTrip = async (name) => {
+  const fmtDate = (d) => d.toLocaleDateString("es-AR", { day: "numeric", month: "short" });
+
+  const confirmCreateTrip = async ({ name, startDate, endDate, destinations }) => {
     setShowCreate(false);
     const id = genCode();
+
+    const start = new Date(startDate + "T00:00:00");
+    const end = new Date(endDate + "T00:00:00");
+    let numDays = Math.round((end - start) / 86400000) + 1;
+    if (!(numDays > 0)) numDays = 1;
+
+    const dests = destinations.length ? destinations : ["Sin definir"];
+    const groupSize = Math.ceil(numDays / dests.length);
+
+    const dayRows = Array.from({ length: numDays }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      const city = dests[Math.min(dests.length - 1, Math.floor(i / groupSize))];
+      return { trip_id: id, day_number: i + 1, date_label: fmtDate(d), city };
+    });
+
+    const dateRange = numDays === 1 ? fmtDate(start) : `${fmtDate(start)} → ${fmtDate(end)}`;
+
     const { error } = await supabase.from("trips").insert({
       id, name, owner_id: user.id,
       owner_name: user.user_metadata?.display_name || user.email,
-      date_range: "",
+      date_range: dateRange,
     });
     if (error) { notify(error.message); return; }
-    await supabase.from("trip_days").insert({ trip_id: id, day_number: 1, date_label: "Día 1", city: "Sin definir" });
+    await supabase.from("trip_days").insert(dayRows);
     await loadTrips();
     onOpenTrip(id);
   };
@@ -317,13 +363,8 @@ function TripsHome({ user, onOpenTrip }) {
         )}
       </main>
 
-      <PromptModal
+      <NewTripModal
         open={showCreate}
-        title="Nuevo viaje"
-        label="Nombre del viaje"
-        initialValue=""
-        placeholder="Ej: Verano en Madrid"
-        confirmLabel="Crear viaje"
         onCancel={() => setShowCreate(false)}
         onConfirm={confirmCreateTrip}
       />
