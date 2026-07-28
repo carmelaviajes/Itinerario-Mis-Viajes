@@ -3,7 +3,7 @@ import { supabase } from "./lib/supabaseClient";
 import {
   Plane, BedDouble, Bus, Ticket, MapPin, ExternalLink, WifiOff, Check,
   ChevronRight, Plus, Users, Copy, LogOut, ArrowLeft, X, Compass, Loader2,
-  Paperclip, FileText, Image as ImageIcon,
+  Paperclip, FileText, Image as ImageIcon, AlertCircle,
 } from "lucide-react";
 
 const C = {
@@ -19,6 +19,80 @@ const TYPE_STYLES = {
 };
 
 const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+
+/* ---------- Componentes compartidos: Toast y Modal ---------- */
+
+function Toast({ toast, onClose }) {
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(onClose, 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  if (!toast) return null;
+
+  const isError = toast.type === "error";
+  return (
+    <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 max-w-[92%] w-fit">
+      <div
+        className="flex items-center gap-2 px-4 py-3 rounded-xl shadow-[0_8px_24px_rgba(43,59,60,0.18)]"
+        style={{
+          background: isError ? "#3A2320" : C.ink,
+          color: "#fff",
+        }}
+      >
+        <AlertCircle size={16} color={isError ? "#F2A38C" : C.wheat} />
+        <span className="text-[13px] font-medium">{toast.message}</span>
+        <button onClick={onClose} className="ml-2 opacity-70"><X size={14} /></button>
+      </div>
+    </div>
+  );
+}
+
+function PromptModal({ open, title, label, initialValue = "", placeholder, confirmLabel = "Crear", onCancel, onConfirm }) {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    if (open) setValue(initialValue);
+  }, [open, initialValue]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(43,59,60,0.45)" }}>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-[0_16px_40px_rgba(43,59,60,0.25)]" style={{ background: C.card }}>
+        <div className="px-6 pt-6 pb-5">
+          <h3 className="text-[17px] font-semibold mb-4" style={{ color: C.ink }}>{title}</h3>
+          <label className="block text-[10px] uppercase tracking-widest mb-1.5" style={{ color: C.inkSoft }}>{label}</label>
+          <input
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={placeholder}
+            onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) onConfirm(value.trim()); }}
+            className="w-full text-[16px] pb-2 outline-none bg-transparent"
+            style={{ color: C.ink, borderBottom: `2px solid ${C.platinum}` }}
+          />
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-3" style={{ borderTop: `2px dashed ${C.platinum}`, background: C.bg }}>
+          <button onClick={onCancel} className="text-[13px] font-semibold px-4 py-2 rounded-full" style={{ color: C.inkSoft }}>
+            Cancelar
+          </button>
+          <button
+            onClick={() => value.trim() && onConfirm(value.trim())}
+            disabled={!value.trim()}
+            className="text-[13px] font-semibold text-white px-4 py-2 rounded-full disabled:opacity-40"
+            style={{ background: C.copper }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- AuthScreen ---------- */
 
 function AuthScreen() {
   const [mode, setMode] = useState("login");
@@ -91,11 +165,17 @@ function AuthScreen() {
   );
 }
 
+/* ---------- TripsHome ---------- */
+
 function TripsHome({ user, onOpenTrip }) {
   const [trips, setTrips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [joinCode, setJoinCode] = useState("");
   const [showJoin, setShowJoin] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const notify = (message, type = "error") => setToast({ message, type });
 
   const loadTrips = async () => {
     setLoading(true);
@@ -109,15 +189,15 @@ function TripsHome({ user, onOpenTrip }) {
 
   useEffect(() => { loadTrips(); }, []);
 
-  const createTrip = async () => {
+  const confirmCreateTrip = async (name) => {
+    setShowCreate(false);
     const id = genCode();
-    const name = prompt("Nombre del viaje", "Nuevo viaje") || "Nuevo viaje";
     const { error } = await supabase.from("trips").insert({
       id, name, owner_id: user.id,
       owner_name: user.user_metadata?.display_name || user.email,
       date_range: "",
     });
-    if (error) { alert(error.message); return; }
+    if (error) { notify(error.message); return; }
     await supabase.from("trip_days").insert({ trip_id: id, day_number: 1, date_label: "Día 1", city: "Sin definir" });
     await loadTrips();
     onOpenTrip(id);
@@ -127,9 +207,9 @@ function TripsHome({ user, onOpenTrip }) {
     const code = joinCode.trim().toUpperCase();
     if (!code) return;
     const { data: trip } = await supabase.from("trips").select("id").eq("id", code).single();
-    if (!trip) { alert("No encontramos un viaje con ese código."); return; }
+    if (!trip) { notify("No encontramos un viaje con ese código."); return; }
     const { error } = await supabase.from("trip_members").insert({ trip_id: code, user_id: user.id });
-    if (error && !error.message.includes("duplicate")) { alert(error.message); return; }
+    if (error && !error.message.includes("duplicate")) { notify(error.message); return; }
     setJoinCode("");
     setShowJoin(false);
     await loadTrips();
@@ -167,7 +247,7 @@ function TripsHome({ user, onOpenTrip }) {
         ))}
 
         <div className="flex gap-2 mt-2">
-          <button onClick={createTrip} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold text-white py-3 rounded-xl" style={{ background: C.copper }}>
+          <button onClick={() => setShowCreate(true)} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold text-white py-3 rounded-xl" style={{ background: C.copper }}>
             <Plus size={15} /> Nuevo viaje
           </button>
           <button onClick={() => setShowJoin((v) => !v)} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl" style={{ background: C.wheat, color: C.ink }}>
@@ -183,9 +263,23 @@ function TripsHome({ user, onOpenTrip }) {
           </div>
         )}
       </main>
+
+      <PromptModal
+        open={showCreate}
+        title="Nuevo viaje"
+        label="Nombre del viaje"
+        initialValue=""
+        placeholder="Ej: Verano en Madrid"
+        confirmLabel="Crear viaje"
+        onCancel={() => setShowCreate(false)}
+        onConfirm={confirmCreateTrip}
+      />
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
+
+/* ---------- TicketCard ---------- */
 
 function TicketCard({ item }) {
   const style = TYPE_STYLES[item.type];
@@ -231,6 +325,8 @@ function TicketCard({ item }) {
   );
 }
 
+/* ---------- TripView ---------- */
+
 function TripView({ tripId, onBack }) {
   const [trip, setTrip] = useState(null);
   const [days, setDays] = useState([]);
@@ -262,6 +358,13 @@ function TripView({ tripId, onBack }) {
   const dayData = days.find((d) => d.day_number === selectedDay) || days[0];
   const copyCode = () => { navigator.clipboard.writeText(trip.id); setCopied(true); setTimeout(() => setCopied(false), 1500); };
 
+  const destinations = [...new Set(days.map((d) => d.city).filter((c) => c && c !== "Sin definir"))];
+  const dateStart = days[0]?.date_label;
+  const dateEnd = days[days.length - 1]?.date_label;
+  const dateRangeLabel = dateStart && dateEnd
+    ? (dateStart === dateEnd ? dateStart : `${dateStart} → ${dateEnd}`)
+    : null;
+
   if (showAdd) {
     return <AddItem trip={trip} days={days} initialDay={selectedDay} onCancel={() => setShowAdd(false)} onSaved={async () => { setShowAdd(false); await load(); }} />;
   }
@@ -273,8 +376,32 @@ function TripView({ tripId, onBack }) {
           <button onClick={onBack} style={{ color: C.inkSoft }}><ArrowLeft size={18} /></button>
         </div>
         <h1 className="text-[24px]" style={{ fontFamily: "Georgia, serif", color: C.ink }}>{trip.name}</h1>
-        <div className="flex items-center justify-between mt-1">
-          <p className="text-[12px]" style={{ color: C.inkSoft }}>de {trip.owner_name}</p>
+        <p className="text-[12px] mt-0.5" style={{ color: C.inkSoft }}>de {trip.owner_name}</p>
+
+        {(destinations.length > 0 || dateRangeLabel) && (
+          <div className="mt-3 flex flex-col gap-1.5 rounded-xl p-3" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            {destinations.length > 0 && (
+              <div className="flex items-start gap-2">
+                <MapPin size={14} color={C.copper} className="mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="text-[9px] uppercase tracking-widest" style={{ color: C.inkSoft }}>Destinos</div>
+                  <div className="text-[13px] font-semibold" style={{ color: C.ink }}>{destinations.join(" · ")}</div>
+                </div>
+              </div>
+            )}
+            {dateRangeLabel && (
+              <div className="flex items-start gap-2">
+                <Compass size={14} color={C.copper} className="mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="text-[9px] uppercase tracking-widest" style={{ color: C.inkSoft }}>Fechas</div>
+                  <div className="text-[13px] font-semibold font-mono" style={{ color: C.ink }}>{dateRangeLabel}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end mt-2">
           <button onClick={copyCode} className="flex items-center gap-1 text-[11px] font-mono px-2 py-1 rounded-md" style={{ background: C.platinum, color: C.ink }}>
             <Copy size={11} /> {copied ? "¡Copiado!" : trip.id}
           </button>
@@ -316,6 +443,8 @@ function TripView({ tripId, onBack }) {
   );
 }
 
+/* ---------- AddItem ---------- */
+
 function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
   const [dayMode, setDayMode] = useState("existing");
   const [day, setDay] = useState(initialDay);
@@ -331,6 +460,9 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  const notify = (message, type = "error") => setToast({ message, type });
 
   const canSave = title.trim() && (dayMode === "existing" || (newDate.trim() && newCity.trim()));
 
@@ -344,7 +476,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
       const { data, error } = await supabase.from("trip_days")
         .insert({ trip_id: trip.id, day_number: nextNum, date_label: newDate.trim(), city: newCity.trim() })
         .select().single();
-      if (error) { alert(error.message); setSaving(false); return; }
+      if (error) { notify(error.message); setSaving(false); return; }
       dayId = data.id;
     }
 
@@ -352,7 +484,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
     if (file) {
       const path = `${trip.id}/${Date.now()}-${file.name}`;
       const { error: upErr } = await supabase.storage.from("vouchers").upload(path, file);
-      if (upErr) { alert("No se pudo subir el archivo: " + upErr.message); }
+      if (upErr) { notify("No se pudo subir el archivo: " + upErr.message); }
       else {
         const { data: pub } = supabase.storage.from("vouchers").getPublicUrl(path);
         finalAttachmentUrl = pub.publicUrl;
@@ -368,7 +500,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
       voucher_label: "Ver reserva", attachment_url: finalAttachmentUrl,
     });
     setSaving(false);
-    if (error) { alert(error.message); return; }
+    if (error) { notify(error.message); return; }
     onSaved();
   };
 
@@ -434,6 +566,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
           {saving ? <Loader2 size={15} className="animate-spin" /> : "Guardar reserva"}
         </button>
       </main>
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
