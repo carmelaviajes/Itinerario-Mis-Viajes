@@ -3,7 +3,7 @@ import { supabase } from "./lib/supabaseClient";
 import {
   Plane, BedDouble, Bus, Ticket, MapPin, ExternalLink, WifiOff, Check,
   ChevronRight, Plus, Users, Copy, LogOut, ArrowLeft, X, Compass, Loader2,
-  Paperclip, FileText, Image as ImageIcon, AlertCircle,
+  Paperclip, FileText, Image as ImageIcon, AlertCircle, Trash2,
 } from "lucide-react";
 
 const C = {
@@ -44,6 +44,32 @@ function Toast({ toast, onClose }) {
         <AlertCircle size={16} color={isError ? "#F2A38C" : C.wheat} />
         <span className="text-[13px] font-medium">{toast.message}</span>
         <button onClick={onClose} className="ml-2 opacity-70"><X size={14} /></button>
+      </div>
+    </div>
+  );
+}
+
+function ConfirmModal({ open, title, message, confirmLabel = "Confirmar", danger = false, onCancel, onConfirm }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-6" style={{ background: "rgba(43,59,60,0.45)" }}>
+      <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-[0_16px_40px_rgba(43,59,60,0.25)]" style={{ background: C.card }}>
+        <div className="px-6 pt-6 pb-5">
+          <h3 className="text-[17px] font-semibold mb-2" style={{ color: C.ink }}>{title}</h3>
+          <p className="text-[13px]" style={{ color: C.inkSoft }}>{message}</p>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-3" style={{ borderTop: `2px dashed ${C.platinum}`, background: C.bg }}>
+          <button onClick={onCancel} className="text-[13px] font-semibold px-4 py-2 rounded-full" style={{ color: C.inkSoft }}>
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            className="text-[13px] font-semibold text-white px-4 py-2 rounded-full"
+            style={{ background: danger ? "#B7391F" : C.copper }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -174,6 +200,8 @@ function TripsHome({ user, onOpenTrip }) {
   const [showJoin, setShowJoin] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [toast, setToast] = useState(null);
+  const [tripToDelete, setTripToDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const notify = (message, type = "error") => setToast({ message, type });
 
@@ -201,6 +229,23 @@ function TripsHome({ user, onOpenTrip }) {
     await supabase.from("trip_days").insert({ trip_id: id, day_number: 1, date_label: "Día 1", city: "Sin definir" });
     await loadTrips();
     onOpenTrip(id);
+  };
+
+  const deleteTrip = async () => {
+    if (!tripToDelete) return;
+    setDeleting(true);
+    const id = tripToDelete.id;
+    const { data: dayRows } = await supabase.from("trip_days").select("id").eq("trip_id", id);
+    const dayIds = (dayRows || []).map((d) => d.id);
+    if (dayIds.length) await supabase.from("trip_items").delete().in("day_id", dayIds);
+    await supabase.from("trip_days").delete().eq("trip_id", id);
+    await supabase.from("trip_members").delete().eq("trip_id", id);
+    const { error } = await supabase.from("trips").delete().eq("id", id);
+    setDeleting(false);
+    setTripToDelete(null);
+    if (error) { notify(error.message); return; }
+    await loadTrips();
+    notify("Viaje eliminado.", "success");
   };
 
   const joinTrip = async () => {
@@ -235,15 +280,23 @@ function TripsHome({ user, onOpenTrip }) {
           </div>
         )}
         {trips.map((t) => (
-          <button key={t.id} onClick={() => onOpenTrip(t.id)}
-            className="text-left rounded-xl p-4 flex items-center justify-between"
-            style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
-            <div>
-              <h3 className="text-[16px] font-semibold" style={{ color: C.ink }}>{t.name}</h3>
-              <p className="text-[12px]" style={{ color: C.inkSoft }}>{t.date_range || "Sin fechas"} · de {t.owner_name}</p>
-            </div>
-            <ChevronRight size={18} style={{ color: C.lightBeige }} />
-          </button>
+          <div key={t.id} className="rounded-xl flex items-center" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <button onClick={() => onOpenTrip(t.id)} className="flex-1 text-left p-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-[16px] font-semibold" style={{ color: C.ink }}>{t.name}</h3>
+                <p className="text-[12px]" style={{ color: C.inkSoft }}>{t.date_range || "Sin fechas"} · de {t.owner_name}</p>
+              </div>
+              <ChevronRight size={18} style={{ color: C.lightBeige }} />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setTripToDelete(t); }}
+              className="px-3 self-stretch flex items-center"
+              style={{ color: C.inkSoft, borderLeft: `1px solid ${C.platinum}` }}
+              aria-label="Eliminar viaje"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         ))}
 
         <div className="flex gap-2 mt-2">
@@ -273,6 +326,15 @@ function TripsHome({ user, onOpenTrip }) {
         confirmLabel="Crear viaje"
         onCancel={() => setShowCreate(false)}
         onConfirm={confirmCreateTrip}
+      />
+      <ConfirmModal
+        open={!!tripToDelete}
+        title="Eliminar viaje"
+        message={tripToDelete ? `¿Seguro que querés eliminar "${tripToDelete.name}"? Se van a borrar todos sus días y reservas. Esta acción no se puede deshacer.` : ""}
+        confirmLabel={deleting ? "Eliminando..." : "Eliminar"}
+        danger
+        onCancel={() => setTripToDelete(null)}
+        onConfirm={deleteTrip}
       />
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
