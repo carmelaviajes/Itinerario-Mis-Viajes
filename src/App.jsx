@@ -22,6 +22,7 @@ const C = {
 };
 
 const FONT_SCRIPT = "'Mr Leopolde', 'Georgia', serif";
+const FONT_TITLE = "'Montserrat', sans-serif";
 
 const TYPE_STYLES = {
   flight: { icon: Plane, label: "Vuelo", accent: "#1A657B" },
@@ -41,6 +42,7 @@ const MR_LEOPOLDE_BASE64 = "AAEAAAARAQAABAAQTFRTSH6g55EAAAVQAAAA2k9TLzJe8l3QAAAB
 function GlobalFonts() {
   return (
     <style>{`
+      @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&display=swap');
       @font-face {
         font-family: 'Mr Leopolde';
         src: url(data:font/truetype;charset=utf-8;base64,${MR_LEOPOLDE_BASE64}) format('truetype');
@@ -285,8 +287,10 @@ function EditTripModal({ open, trip, days, onCancel, onSaved }) {
   };
 
   const addRow = () => {
-    const nextNum = Math.max(0, ...rows.map((r) => r.day_number)) + 1;
-    setRows((rs) => [...rs, { key: `new-${nextNum}-${Date.now()}`, id: null, day_number: nextNum, date_label: "", city: "" }]);
+    setRows((rs) => {
+      const nextNum = Math.max(0, ...rs.map((r) => r.day_number)) + 1;
+      return [...rs, { key: `new-${nextNum}-${Date.now()}`, id: null, day_number: nextNum, date_label: "", city: "" }];
+    });
   };
 
   const askRemoveRow = (row) => {
@@ -308,20 +312,28 @@ function EditTripModal({ open, trip, days, onCancel, onSaved }) {
     setError("");
     try {
       if (removedIds.length) {
-        await supabase.from("trip_items").delete().in("day_id", removedIds);
-        await supabase.from("trip_days").delete().in("id", removedIds);
+        const { error: delItemsErr } = await supabase.from("trip_items").delete().in("day_id", removedIds);
+        if (delItemsErr) throw delItemsErr;
+        const { error: delDaysErr } = await supabase.from("trip_days").delete().in("id", removedIds);
+        if (delDaysErr) throw delDaysErr;
       }
       for (const r of rows) {
         if (r.id) {
-          await supabase.from("trip_days").update({ date_label: r.date_label.trim(), city: r.city.trim() }).eq("id", r.id);
+          const { error: updErr } = await supabase.from("trip_days")
+            .update({ date_label: r.date_label.trim(), city: r.city.trim() }).eq("id", r.id);
+          if (updErr) throw updErr;
         } else {
-          await supabase.from("trip_days").insert({ trip_id: trip.id, day_number: r.day_number, date_label: r.date_label.trim(), city: r.city.trim() });
+          const { error: insErr } = await supabase.from("trip_days")
+            .insert({ trip_id: trip.id, day_number: r.day_number, date_label: r.date_label.trim(), city: r.city.trim() });
+          if (insErr) throw insErr;
         }
       }
       const dateRange = rows.length === 1
         ? rows[0].date_label.trim()
         : `${rows[0].date_label.trim()} → ${rows[rows.length - 1].date_label.trim()}`;
-      await supabase.from("trips").update({ name: name.trim(), date_range: dateRange }).eq("id", trip.id);
+      const { error: tripErr } = await supabase.from("trips")
+        .update({ name: name.trim(), date_range: dateRange }).eq("id", trip.id);
+      if (tripErr) throw tripErr;
       setSaving(false);
       onSaved();
     } catch (err) {
@@ -654,7 +666,7 @@ function TripsHome({ user, onOpenTrip }) {
 
 /* ---------- TicketCard ---------- */
 
-function TicketCard({ item }) {
+function TicketCard({ item, onEdit }) {
   const style = TYPE_STYLES[item.type];
   const Icon = style.icon;
   const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.maps_query || "")}`;
@@ -666,6 +678,11 @@ function TicketCard({ item }) {
           <Icon size={16} color={style.accent} />
           <span className="text-[11px] font-semibold uppercase" style={{ color: style.accent }}>{style.label}</span>
           <span className="text-[11px] ml-auto" style={{ color: C.inkSoft }}>{item.source}</span>
+          {onEdit && (
+            <button onClick={() => onEdit(item)} style={{ color: C.inkSoft }} aria-label="Editar reserva">
+              <Pencil size={13} />
+            </button>
+          )}
         </div>
         <h3 className="font-bold text-[15px] mb-2.5" style={{ color: C.ink }}>{item.title}</h3>
         {item.meta?.length > 0 && (
@@ -708,6 +725,7 @@ function TripView({ tripId, onBack }) {
   const [offline, setOffline] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [editingItem, setEditingItem] = useState(null);
   const [copied, setCopied] = useState(false);
 
   const cacheKey = `trip:${tripId}`;
@@ -760,6 +778,17 @@ function TripView({ tripId, onBack }) {
     return <AddItem trip={trip} days={days} initialDay={selectedDay} onCancel={() => setShowAdd(false)} onSaved={async () => { setShowAdd(false); await load(); }} />;
   }
 
+  if (editingItem) {
+    return (
+      <EditItem
+        item={editingItem}
+        day={dayData}
+        onCancel={() => setEditingItem(null)}
+        onSaved={async () => { setEditingItem(null); await load(); }}
+      />
+    );
+  }
+
   const closeEdit = async (didSave) => {
     setShowEdit(false);
     if (didSave) { setSelectedDay(null); await load(); }
@@ -773,7 +802,7 @@ function TripView({ tripId, onBack }) {
           <LogoMark size={20} />
         </div>
         <div className="flex items-center gap-2">
-          <h1 className="text-[36px] leading-none" style={{ fontFamily: FONT_SCRIPT, color: C.ink }}>{trip.name}</h1>
+          <h1 className="text-[30px] font-extrabold leading-none" style={{ fontFamily: FONT_TITLE, color: C.ink }}>{trip.name}</h1>
           <button onClick={() => setShowEdit(true)} disabled={offline} className="mb-1 disabled:opacity-30" style={{ color: C.inkSoft }} aria-label="Editar viaje">
             <Pencil size={15} />
           </button>
@@ -831,7 +860,9 @@ function TripView({ tripId, onBack }) {
               <h2 className="text-[15px] font-bold" style={{ color: C.ink }}>{dayData.city}</h2>
             </div>
             <div className="flex flex-col gap-3">
-              {(dayData.trip_items || []).map((item) => <TicketCard key={item.id} item={item} />)}
+              {(dayData.trip_items || []).map((item) => (
+                <TicketCard key={item.id} item={item} onEdit={offline ? null : setEditingItem} />
+              ))}
               {(dayData.trip_items || []).length === 0 && <p className="text-[13px]" style={{ color: C.inkSoft }}>Sin reservas todavía.</p>}
             </div>
           </>
@@ -866,33 +897,43 @@ function TripView({ tripId, onBack }) {
 /* Campos específicos por tipo de reserva. Cada uno arma su propio arreglo de
    { label, value } que termina en trip_items.meta, así que TicketCard no
    necesita cambios: ya sabe renderizar cualquier lista de meta. */
-function useTypeFields(type) {
-  const [airline, setAirline] = useState("");
-  const [departureTime, setDepartureTime] = useState("");
-  const [arrivalTime, setArrivalTime] = useState("");
-  const [boardingTime, setBoardingTime] = useState("");
-  const [hasConnection, setHasConnection] = useState(false);
-  const [connectionDetail, setConnectionDetail] = useState("");
-  const [baggageIncluded, setBaggageIncluded] = useState("no_especificado");
-  const [checkinDone, setCheckinDone] = useState(false);
+function useTypeFields(type, initial = {}) {
+  const [airline, setAirline] = useState(initial.airline || "");
+  const [departureAirport, setDepartureAirport] = useState(initial.departureAirport || "");
+  const [departureTerminal, setDepartureTerminal] = useState(initial.departureTerminal || "");
+  const [departureTime, setDepartureTime] = useState(initial.departureTime || "");
+  const [arrivalAirport, setArrivalAirport] = useState(initial.arrivalAirport || "");
+  const [arrivalTerminal, setArrivalTerminal] = useState(initial.arrivalTerminal || "");
+  const [arrivalDate, setArrivalDate] = useState(initial.arrivalDate || "");
+  const [arrivalTime, setArrivalTime] = useState(initial.arrivalTime || "");
+  const [boardingTime, setBoardingTime] = useState(initial.boardingTime || "");
+  const [hasConnection, setHasConnection] = useState(initial.hasConnection || false);
+  const [connectionDetail, setConnectionDetail] = useState(initial.connectionDetail || "");
+  const [baggageIncluded, setBaggageIncluded] = useState(initial.baggageIncluded || "no_especificado");
+  const [checkinDone, setCheckinDone] = useState(initial.checkinDone || false);
 
-  const [checkInDateTime, setCheckInDateTime] = useState("");
-  const [checkOutDateTime, setCheckOutDateTime] = useState("");
-  const [roomType, setRoomType] = useState("");
+  const [checkInDateTime, setCheckInDateTime] = useState(initial.checkInDateTime || "");
+  const [checkOutDateTime, setCheckOutDateTime] = useState(initial.checkOutDateTime || "");
+  const [roomType, setRoomType] = useState(initial.roomType || "");
 
-  const [operator, setOperator] = useState("");
-  const [seat, setSeat] = useState("");
+  const [operator, setOperator] = useState(initial.operator || "");
+  const [seat, setSeat] = useState(initial.seat || "");
 
-  const [activityTime, setActivityTime] = useState("");
-  const [duration, setDuration] = useState("");
-  const [meetingPoint, setMeetingPoint] = useState("");
+  const [activityTime, setActivityTime] = useState(initial.activityTime || "");
+  const [duration, setDuration] = useState(initial.duration || "");
+  const [meetingPoint, setMeetingPoint] = useState(initial.meetingPoint || "");
 
   const buildMeta = () => {
     const meta = [];
     if (type === "flight") {
       if (airline) meta.push({ label: "Aerolínea", value: airline });
-      if (departureTime) meta.push({ label: "Salida", value: departureTime });
-      if (arrivalTime) meta.push({ label: "Llegada", value: arrivalTime });
+      if (departureAirport) meta.push({ label: "Aeropuerto de salida", value: departureAirport });
+      if (departureTerminal) meta.push({ label: "Terminal de salida", value: departureTerminal });
+      if (departureTime) meta.push({ label: "Hora de salida", value: departureTime });
+      if (arrivalAirport) meta.push({ label: "Aeropuerto de llegada", value: arrivalAirport });
+      if (arrivalTerminal) meta.push({ label: "Terminal de llegada", value: arrivalTerminal });
+      if (arrivalDate) meta.push({ label: "Fecha de llegada", value: arrivalDate });
+      if (arrivalTime) meta.push({ label: "Hora de llegada", value: arrivalTime });
       if (boardingTime) meta.push({ label: "Embarque", value: boardingTime });
       meta.push({ label: "Escalas", value: hasConnection ? (connectionDetail || "Sí") : "Directo" });
       if (baggageIncluded !== "no_especificado") {
@@ -918,7 +959,11 @@ function useTypeFields(type) {
 
   return {
     fields: {
-      airline, setAirline, departureTime, setDepartureTime, arrivalTime, setArrivalTime,
+      airline, setAirline,
+      departureAirport, setDepartureAirport, departureTerminal, setDepartureTerminal,
+      departureTime, setDepartureTime,
+      arrivalAirport, setArrivalAirport, arrivalTerminal, setArrivalTerminal,
+      arrivalDate, setArrivalDate, arrivalTime, setArrivalTime,
       boardingTime, setBoardingTime, hasConnection, setHasConnection, connectionDetail, setConnectionDetail,
       baggageIncluded, setBaggageIncluded, checkinDone, setCheckinDone,
       checkInDateTime, setCheckInDateTime, checkOutDateTime, setCheckOutDateTime, roomType, setRoomType,
@@ -927,6 +972,44 @@ function useTypeFields(type) {
     },
     buildMeta,
   };
+}
+
+/* Reconstruye los valores iniciales de useTypeFields a partir del meta[]
+   ya guardado en un trip_item, para poder precargar el formulario al editar. */
+function parseInitialFields(type, meta) {
+  const byLabel = Object.fromEntries((meta || []).map((m) => [m.label, m.value]));
+  const initial = {};
+  if (type === "flight") {
+    initial.airline = byLabel["Aerolínea"] || "";
+    initial.departureAirport = byLabel["Aeropuerto de salida"] || "";
+    initial.departureTerminal = byLabel["Terminal de salida"] || "";
+    initial.departureTime = byLabel["Hora de salida"] || byLabel["Salida"] || "";
+    initial.arrivalAirport = byLabel["Aeropuerto de llegada"] || "";
+    initial.arrivalTerminal = byLabel["Terminal de llegada"] || "";
+    initial.arrivalDate = byLabel["Fecha de llegada"] || "";
+    initial.arrivalTime = byLabel["Hora de llegada"] || byLabel["Llegada"] || "";
+    initial.boardingTime = byLabel["Embarque"] || "";
+    const escalas = byLabel["Escalas"];
+    initial.hasConnection = !!escalas && escalas !== "Directo";
+    initial.connectionDetail = initial.hasConnection ? escalas : "";
+    const baggage = byLabel["Equipaje incluido"];
+    initial.baggageIncluded = baggage === "Sí" ? "si" : baggage === "No" ? "no" : "no_especificado";
+    initial.checkinDone = byLabel["Check-in"] === "Hecho";
+  } else if (type === "hotel") {
+    initial.checkInDateTime = byLabel["Check-in"] || "";
+    initial.checkOutDateTime = byLabel["Check-out"] || "";
+    initial.roomType = byLabel["Habitación"] || "";
+  } else if (type === "transport") {
+    initial.operator = byLabel["Empresa"] || "";
+    initial.departureTime = byLabel["Salida"] || "";
+    initial.arrivalTime = byLabel["Llegada"] || "";
+    initial.seat = byLabel["Asiento"] || "";
+  } else if (type === "activity") {
+    initial.activityTime = byLabel["Hora"] || "";
+    initial.duration = byLabel["Duración"] || "";
+    initial.meetingPoint = byLabel["Punto de encuentro"] || "";
+  }
+  return initial;
 }
 
 function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
@@ -1037,9 +1120,21 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
           <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
             <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
             <div className="flex gap-2">
-              <Field label="Hora de salida" value={f.departureTime} onChange={f.setDepartureTime} placeholder="23:40" />
+              <Field label="Aeropuerto de salida" value={f.departureAirport} onChange={f.setDepartureAirport} placeholder="Ezeiza (EZE)" />
+              <Field label="Terminal de salida" value={f.departureTerminal} onChange={f.setDepartureTerminal} placeholder="Terminal A" />
+            </div>
+            <Field label="Hora de salida" value={f.departureTime} onChange={f.setDepartureTime} placeholder="23:40" />
+            <div className="flex gap-2">
+              <Field label="Aeropuerto de llegada" value={f.arrivalAirport} onChange={f.setArrivalAirport} placeholder="Barajas (MAD)" />
+              <Field label="Terminal de llegada" value={f.arrivalTerminal} onChange={f.setArrivalTerminal} placeholder="Terminal 4" />
+            </div>
+            <div className="flex gap-2">
+              <Field label="Fecha de llegada" value={f.arrivalDate} onChange={f.setArrivalDate} placeholder="4 de agosto" />
               <Field label="Hora de llegada" value={f.arrivalTime} onChange={f.setArrivalTime} placeholder="14:10" />
             </div>
+            <p className="text-[10px] -mt-1.5" style={{ color: C.inkSoft }}>
+              Si el vuelo llega al día siguiente, poné la fecha de llegada para no confundirte.
+            </p>
             <Field label="Hora de embarque" value={f.boardingTime} onChange={f.setBoardingTime} placeholder="23:00" />
             <Toggle label="Tiene escala/conexión" checked={f.hasConnection} onChange={f.setHasConnection} />
             {f.hasConnection && (
@@ -1095,7 +1190,12 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
           <Field label="Valor" value={extraValue} onChange={setExtraValue} placeholder="Valor" />
         </div>
         <Field label="Código de reserva" value={code} onChange={setCode} placeholder="Se genera solo si lo dejás vacío" />
-        <Field label="Dirección para Maps" value={mapsQuery} onChange={setMapsQuery} placeholder="Hotel Atlántico Madrid, Gran Vía 38" />
+        <Field
+          label={type === "flight" ? "Aeropuerto para Maps (cómo llegar)" : "Dirección para Maps"}
+          value={mapsQuery}
+          onChange={setMapsQuery}
+          placeholder={type === "flight" ? "Aeropuerto de Ezeiza, Buenos Aires" : "Hotel Atlántico Madrid, Gran Vía 38"}
+        />
         <Field label="Link a comprobante (opcional)" value={attachmentUrl} onChange={setAttachmentUrl} placeholder="https://drive.google.com/..." />
 
         <div>
@@ -1120,6 +1220,218 @@ function Field({ label, value, onChange, placeholder }) {
       <label className="block text-[10px] uppercase mb-1" style={{ color: C.inkSoft }}>{label}</label>
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
         className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }} />
+    </div>
+  );
+}
+
+/* Etiquetas de meta que ya sabemos reconstruir en el formulario, por tipo.
+   Cualquier otra etiqueta que ya estuviera guardada (ej. "Otro detalle" viejo)
+   se conserva tal cual al editar, en vez de perderse. */
+const KNOWN_META_LABELS = {
+  flight: ["Aerolínea", "Aeropuerto de salida", "Terminal de salida", "Hora de salida", "Salida",
+    "Aeropuerto de llegada", "Terminal de llegada", "Fecha de llegada", "Hora de llegada", "Llegada",
+    "Embarque", "Escalas", "Equipaje incluido", "Check-in"],
+  hotel: ["Check-in", "Check-out", "Habitación"],
+  transport: ["Empresa", "Salida", "Llegada", "Asiento"],
+  activity: ["Hora", "Duración", "Punto de encuentro"],
+};
+
+/* ---------- EditItem: editar una reserva ya cargada ---------- */
+
+function EditItem({ item, day, onCancel, onSaved }) {
+  const [type, setType] = useState(item.type);
+  const [source, setSource] = useState(item.source || "");
+  const [title, setTitle] = useState(item.title || "");
+  const [code, setCode] = useState(item.code || "");
+  const [mapsQuery, setMapsQuery] = useState(item.maps_query || "");
+  const [extraLabel, setExtraLabel] = useState("");
+  const [extraValue, setExtraValue] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState(item.attachment_url || "");
+  const [file, setFile] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const { fields: f, buildMeta } = useTypeFields(type, parseInitialFields(item.type, item.meta));
+
+  const notify = (message, msgType = "error") => setToast({ message, type: msgType });
+
+  const canSave = title.trim();
+
+  const leftoverMeta = (item.meta || []).filter(
+    (m) => !(KNOWN_META_LABELS[item.type] || []).includes(m.label)
+  );
+
+  const submit = async () => {
+    setSaving(true);
+    let finalAttachmentUrl = attachmentUrl.trim() || null;
+    if (file) {
+      const path = `${item.day_id}/${Date.now()}-${file.name}`;
+      const { error: upErr } = await supabase.storage.from("vouchers").upload(path, file);
+      if (upErr) { notify("No se pudo subir el archivo: " + upErr.message); }
+      else {
+        const { data: pub } = supabase.storage.from("vouchers").getPublicUrl(path);
+        finalAttachmentUrl = pub.publicUrl;
+      }
+    }
+
+    const meta = buildMeta();
+    leftoverMeta.forEach((m) => meta.push(m));
+    if (extraLabel && extraValue) meta.push({ label: extraLabel, value: extraValue });
+
+    const { error } = await supabase.from("trip_items").update({
+      type, source: source || "Manual", title: title.trim(),
+      meta, code: code.trim() || item.code, maps_query: mapsQuery.trim(),
+      attachment_url: finalAttachmentUrl,
+    }).eq("id", item.id);
+    setSaving(false);
+    if (error) { notify(error.message); return; }
+    onSaved();
+  };
+
+  const doDelete = async () => {
+    const { error } = await supabase.from("trip_items").delete().eq("id", item.id);
+    if (error) { notify(error.message); setConfirmDelete(false); return; }
+    onSaved();
+  };
+
+  return (
+    <div className="min-h-screen" style={{ background: C.bg }}>
+      <header className="px-5 pt-6 pb-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${C.platinum}` }}>
+        <h1 className="text-[19px] font-bold" style={{ color: C.ink }}>Editar reserva</h1>
+        <button onClick={onCancel} style={{ color: C.inkSoft }}><X size={20} /></button>
+      </header>
+
+      <main className="px-5 py-5 flex flex-col gap-4">
+        {day && (
+          <p className="text-[11px]" style={{ color: C.inkSoft }}>
+            Día {day.day_number} · {day.date_label} · {day.city}
+          </p>
+        )}
+
+        <div>
+          <label className="block text-[10px] uppercase mb-2" style={{ color: C.inkSoft }}>Tipo</label>
+          <div className="flex gap-2 flex-wrap">
+            {Object.entries(TYPE_STYLES).map(([key, s]) => {
+              const Icon = s.icon; const active = type === key;
+              return (
+                <button key={key} onClick={() => setType(key)} className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-2 rounded-full"
+                  style={{ background: active ? s.accent : C.card, color: active ? "#fff" : C.ink, border: `1px solid ${active ? s.accent : C.platinum}` }}>
+                  <Icon size={13} /> {s.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <Field label="Título" value={title} onChange={setTitle} placeholder="Ej: Vuelo AR1130 a Madrid" />
+        <Field label="Fuente" value={source} onChange={setSource} placeholder="Booking, Despegar, Airbnb..." />
+
+        {type === "flight" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
+            <div className="flex gap-2">
+              <Field label="Aeropuerto de salida" value={f.departureAirport} onChange={f.setDepartureAirport} placeholder="Ezeiza (EZE)" />
+              <Field label="Terminal de salida" value={f.departureTerminal} onChange={f.setDepartureTerminal} placeholder="Terminal A" />
+            </div>
+            <Field label="Hora de salida" value={f.departureTime} onChange={f.setDepartureTime} placeholder="23:40" />
+            <div className="flex gap-2">
+              <Field label="Aeropuerto de llegada" value={f.arrivalAirport} onChange={f.setArrivalAirport} placeholder="Barajas (MAD)" />
+              <Field label="Terminal de llegada" value={f.arrivalTerminal} onChange={f.setArrivalTerminal} placeholder="Terminal 4" />
+            </div>
+            <div className="flex gap-2">
+              <Field label="Fecha de llegada" value={f.arrivalDate} onChange={f.setArrivalDate} placeholder="4 de agosto" />
+              <Field label="Hora de llegada" value={f.arrivalTime} onChange={f.setArrivalTime} placeholder="14:10" />
+            </div>
+            <p className="text-[10px] -mt-1.5" style={{ color: C.inkSoft }}>
+              Si el vuelo llega al día siguiente, poné la fecha de llegada para no confundirte.
+            </p>
+            <Field label="Hora de embarque" value={f.boardingTime} onChange={f.setBoardingTime} placeholder="23:00" />
+            <Toggle label="Tiene escala/conexión" checked={f.hasConnection} onChange={f.setHasConnection} />
+            {f.hasConnection && (
+              <Field label="Detalle de la escala" value={f.connectionDetail} onChange={f.setConnectionDetail} placeholder="Bogotá, 2h de espera" />
+            )}
+            <SelectField
+              label="¿Incluye valijas?"
+              value={f.baggageIncluded}
+              onChange={f.setBaggageIncluded}
+              options={[
+                { value: "no_especificado", label: "No especificado" },
+                { value: "si", label: "Sí" },
+                { value: "no", label: "No" },
+              ]}
+            />
+            <Toggle label="Check-in ya hecho" checked={f.checkinDone} onChange={f.setCheckinDone} />
+          </div>
+        )}
+
+        {type === "hotel" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <div className="flex gap-2">
+              <Field label="Check-in" value={f.checkInDateTime} onChange={f.setCheckInDateTime} placeholder="15:00" />
+              <Field label="Check-out" value={f.checkOutDateTime} onChange={f.setCheckOutDateTime} placeholder="11:00" />
+            </div>
+            <Field label="Tipo de habitación (opcional)" value={f.roomType} onChange={f.setRoomType} placeholder="Doble con balcón" />
+          </div>
+        )}
+
+        {type === "transport" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <Field label="Empresa / línea" value={f.operator} onChange={f.setOperator} placeholder="Flixbus, Renfe..." />
+            <div className="flex gap-2">
+              <Field label="Hora de salida" value={f.departureTime} onChange={f.setDepartureTime} placeholder="09:00" />
+              <Field label="Hora de llegada" value={f.arrivalTime} onChange={f.setArrivalTime} placeholder="12:30" />
+            </div>
+            <Field label="Asiento (opcional)" value={f.seat} onChange={f.setSeat} placeholder="14A" />
+          </div>
+        )}
+
+        {type === "activity" && (
+          <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            <div className="flex gap-2">
+              <Field label="Hora" value={f.activityTime} onChange={f.setActivityTime} placeholder="10:00" />
+              <Field label="Duración (opcional)" value={f.duration} onChange={f.setDuration} placeholder="2h" />
+            </div>
+            <Field label="Punto de encuentro (opcional)" value={f.meetingPoint} onChange={f.setMeetingPoint} placeholder="Entrada principal" />
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <Field label="Otro detalle (opcional)" value={extraLabel} onChange={setExtraLabel} placeholder="Etiqueta" />
+          <Field label="Valor" value={extraValue} onChange={setExtraValue} placeholder="Valor" />
+        </div>
+        <Field label="Código de reserva" value={code} onChange={setCode} placeholder={item.code} />
+        <Field
+          label={type === "flight" ? "Aeropuerto para Maps (cómo llegar)" : "Dirección para Maps"}
+          value={mapsQuery}
+          onChange={setMapsQuery}
+          placeholder={type === "flight" ? "Aeropuerto de Ezeiza, Buenos Aires" : "Hotel Atlántico Madrid, Gran Vía 38"}
+        />
+        <Field label="Link a comprobante (opcional)" value={attachmentUrl} onChange={setAttachmentUrl} placeholder="https://drive.google.com/..." />
+
+        <div>
+          <label className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-2 rounded-lg cursor-pointer w-fit" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
+            <Paperclip size={13} /> {file ? file.name : "O subir archivo nuevo (foto/PDF)"}
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          </label>
+        </div>
+
+        <button onClick={submit} disabled={!canSave || saving} className="mt-2 w-full flex items-center justify-center gap-1.5 text-[14px] font-semibold text-white py-3.5 rounded-xl disabled:opacity-40" style={{ background: C.copper }}>
+          {saving ? <Loader2 size={15} className="animate-spin" /> : "Guardar cambios"}
+        </button>
+        <button onClick={() => setConfirmDelete(true)} className="text-[12px] font-semibold py-2" style={{ color: "#B7391F" }}>
+          Eliminar reserva
+        </button>
+      </main>
+      <Toast toast={toast} onClose={() => setToast(null)} />
+      <ConfirmModal
+        open={confirmDelete}
+        title="Eliminar reserva"
+        message={`¿Seguro que querés eliminar "${item.title}"? Esta acción no se puede deshacer.`}
+        confirmLabel="Eliminar"
+        danger
+        onCancel={() => setConfirmDelete(false)}
+        onConfirm={doDelete}
+      />
     </div>
   );
 }
