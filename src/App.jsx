@@ -50,6 +50,14 @@ function GlobalFonts() {
         font-style: normal;
         font-display: swap;
       }
+      /* Al imprimir o "Guardar como PDF" desde la ficha de detalle de una
+         reserva, ocultamos toda la app y sólo dejamos visible la ficha. */
+      @media print {
+        body * { visibility: hidden; }
+        .print-ticket, .print-ticket * { visibility: visible; }
+        .print-ticket { position: absolute; left: 0; top: 0; width: 100%; }
+        .no-print { display: none !important; }
+      }
     `}</style>
   );
 }
@@ -666,22 +674,29 @@ function TripsHome({ user, onOpenTrip }) {
 
 /* ---------- TicketCard ---------- */
 
-function TicketCard({ item, onEdit }) {
+function TicketCard({ item, onEdit, onView }) {
   const style = TYPE_STYLES[item.type];
   const Icon = style.icon;
   const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.maps_query || "")}`;
 
   return (
     <div className="relative flex rounded-lg overflow-hidden" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
-      <div className="flex-1 p-4">
+      <button onClick={() => onView(item)} className="flex-1 p-4 text-left" aria-label="Ver ficha completa">
         <div className="flex items-center gap-2 mb-2">
           <Icon size={16} color={style.accent} />
           <span className="text-[11px] font-semibold uppercase" style={{ color: style.accent }}>{style.label}</span>
           <span className="text-[11px] ml-auto" style={{ color: C.inkSoft }}>{item.source}</span>
           {onEdit && (
-            <button onClick={() => onEdit(item)} style={{ color: C.inkSoft }} aria-label="Editar reserva">
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); onEdit(item); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onEdit(item); } }}
+              style={{ color: C.inkSoft }}
+              aria-label="Editar reserva"
+            >
               <Pencil size={13} />
-            </button>
+            </span>
           )}
         </div>
         <h3 className="font-bold text-[15px] mb-2.5" style={{ color: C.ink }}>{item.title}</h3>
@@ -697,20 +712,119 @@ function TicketCard({ item, onEdit }) {
         )}
         <div className="flex gap-2 flex-wrap">
           {item.maps_query && (
-            <a href={mapsHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-md" style={{ color: C.ink, background: C.platinum }}>
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-md" style={{ color: C.ink, background: C.platinum }}>
               <MapPin size={12} /> Cómo llegar
-            </a>
+            </span>
           )}
           {item.attachment_url && (
-            <a href={item.attachment_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-md" style={{ color: "#fff", background: C.lightBeige }}>
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1.5 rounded-md" style={{ color: "#fff", background: C.lightBeige }}>
               <Paperclip size={12} /> Comprobante
-            </a>
+            </span>
           )}
         </div>
-      </div>
+      </button>
       <div className="w-[44px] flex items-center justify-center" style={{ background: C.platinum }}>
         <div className="text-[9px] font-mono font-bold tracking-widest" style={{ writingMode: "vertical-rl", color: C.ink }}>{item.code}</div>
       </div>
+    </div>
+  );
+}
+
+/* ---------- TicketDetailModal ---------- */
+
+/* Ficha completa de una reserva: letra grande, un detalle por renglón (label
+   arriba, valor abajo en grande), para que se lea bien aunque ocupe más
+   espacio. Desde acá se puede editar, imprimir o "descargar" (el diálogo de
+   impresión del navegador permite guardar como PDF sin depender de ninguna
+   librería nueva), y también bajar un .txt plano como respaldo simple. */
+function TicketDetailModal({ item, day, onClose, onEdit }) {
+  const style = TYPE_STYLES[item.type];
+  const Icon = style.icon;
+  const mapsHref = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.maps_query || "")}`;
+
+  const downloadText = () => {
+    const lines = [
+      item.title,
+      `${style.label} · ${item.source || ""}`,
+      day ? `Día ${day.day_number} · ${day.date_label} · ${day.city}` : null,
+      "",
+      ...(item.meta || []).map((m) => `${m.label}: ${m.value}`),
+      "",
+      `Código: ${item.code}`,
+      item.maps_query ? `Ubicación: ${item.maps_query}` : null,
+      item.attachment_url ? `Comprobante: ${item.attachment_url}` : null,
+    ].filter(Boolean);
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${item.title.replace(/[^a-z0-9]+/gi, "_")}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 overflow-y-auto print-ticket" style={{ background: C.bg }}>
+      <header className="no-print px-5 pt-6 pb-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${C.platinum}` }}>
+        <button onClick={onClose} style={{ color: C.inkSoft }} aria-label="Cerrar"><ArrowLeft size={20} /></button>
+        <button onClick={() => onEdit(item)} className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: C.ink }}>
+          <Pencil size={15} /> Editar
+        </button>
+      </header>
+
+      <main className="px-5 py-6 flex flex-col gap-5 max-w-xl mx-auto">
+        <div className="flex items-center gap-2">
+          <Icon size={22} color={style.accent} />
+          <span className="text-[14px] font-bold uppercase tracking-wide" style={{ color: style.accent }}>{style.label}</span>
+          <span className="text-[13px] ml-auto" style={{ color: C.inkSoft }}>{item.source}</span>
+        </div>
+
+        <h1 className="text-[26px] font-extrabold leading-tight" style={{ fontFamily: FONT_TITLE, color: C.ink }}>{item.title}</h1>
+
+        {day && (
+          <p className="text-[14px]" style={{ color: C.inkSoft }}>
+            Día {day.day_number} · {day.date_label} · {day.city}
+          </p>
+        )}
+
+        {item.meta?.length > 0 && (
+          <div className="flex flex-col gap-4 rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+            {item.meta.map((m, i) => (
+              <div key={i} className="flex flex-col gap-0.5" style={{ borderBottom: i < item.meta.length - 1 ? `1px dotted ${C.platinum}` : "none", paddingBottom: i < item.meta.length - 1 ? 12 : 0 }}>
+                <span className="text-[12px] uppercase tracking-wide" style={{ color: C.inkSoft }}>{m.label}</span>
+                <span className="text-[20px] font-bold font-mono" style={{ color: C.ink }}>{m.value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2 rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+          <span className="text-[12px] uppercase tracking-wide" style={{ color: C.inkSoft }}>Código de reserva</span>
+          <span className="text-[22px] font-bold font-mono" style={{ color: C.ink }}>{item.code}</span>
+        </div>
+
+        <div className="no-print flex gap-2 flex-wrap">
+          {item.maps_query && (
+            <a href={mapsHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-3 py-2 rounded-md" style={{ color: C.ink, background: C.platinum }}>
+              <MapPin size={14} /> Cómo llegar
+            </a>
+          )}
+          {item.attachment_url && (
+            <a href={item.attachment_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-[13px] font-semibold px-3 py-2 rounded-md" style={{ color: "#fff", background: C.lightBeige }}>
+              <Paperclip size={14} /> Comprobante
+            </a>
+          )}
+        </div>
+
+        <div className="no-print flex flex-col gap-2 mt-2">
+          <button onClick={() => window.print()} className="w-full flex items-center justify-center gap-1.5 text-[14px] font-semibold text-white py-3.5 rounded-xl" style={{ background: C.copper }}>
+            <FileText size={16} /> Imprimir / Guardar como PDF
+          </button>
+          <button onClick={downloadText} className="w-full flex items-center justify-center gap-1.5 text-[13px] font-semibold py-2.5 rounded-xl" style={{ background: C.wheat, color: C.ink }}>
+            <Paperclip size={14} /> Descargar como texto
+          </button>
+        </div>
+      </main>
     </div>
   );
 }
@@ -726,6 +840,7 @@ function TripView({ tripId, onBack }) {
   const [showAdd, setShowAdd] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [viewingItem, setViewingItem] = useState(null);
   const [copied, setCopied] = useState(false);
 
   const cacheKey = `trip:${tripId}`;
@@ -785,6 +900,18 @@ function TripView({ tripId, onBack }) {
         day={dayData}
         onCancel={() => setEditingItem(null)}
         onSaved={async () => { setEditingItem(null); await load(); }}
+      />
+    );
+  }
+
+  if (viewingItem) {
+    const viewingDay = days.find((d) => d.id === viewingItem.day_id) || dayData;
+    return (
+      <TicketDetailModal
+        item={viewingItem}
+        day={viewingDay}
+        onClose={() => setViewingItem(null)}
+        onEdit={(item) => { setViewingItem(null); setEditingItem(item); }}
       />
     );
   }
@@ -861,7 +988,7 @@ function TripView({ tripId, onBack }) {
             </div>
             <div className="flex flex-col gap-3">
               {(dayData.trip_items || []).map((item) => (
-                <TicketCard key={item.id} item={item} onEdit={offline ? null : setEditingItem} />
+                <TicketCard key={item.id} item={item} onEdit={offline ? null : setEditingItem} onView={setViewingItem} />
               ))}
               {(dayData.trip_items || []).length === 0 && <p className="text-[13px]" style={{ color: C.inkSoft }}>Sin reservas todavía.</p>}
             </div>
@@ -1022,8 +1149,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
   const [title, setTitle] = useState("");
   const [code, setCode] = useState("");
   const [mapsQuery, setMapsQuery] = useState("");
-  const [extraLabel, setExtraLabel] = useState("");
-  const [extraValue, setExtraValue] = useState("");
+  const [customFields, setCustomFields] = useState([]);
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -1060,7 +1186,9 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
     }
 
     const meta = buildMeta();
-    if (extraLabel && extraValue) meta.push({ label: extraLabel, value: extraValue });
+    customFields.forEach((cf) => {
+      if (cf.label.trim() && cf.value.trim()) meta.push({ label: cf.label.trim(), value: cf.value.trim() });
+    });
 
     const { error } = await supabase.from("trip_items").insert({
       day_id: dayId, type, source: source || "Manual", title: title.trim(),
@@ -1185,10 +1313,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
           </div>
         )}
 
-        <div className="flex gap-2">
-          <Field label="Otro detalle (opcional)" value={extraLabel} onChange={setExtraLabel} placeholder="Etiqueta" />
-          <Field label="Valor" value={extraValue} onChange={setExtraValue} placeholder="Valor" />
-        </div>
+        <CustomFieldsEditor fields={customFields} onChange={setCustomFields} />
         <Field label="Código de reserva" value={code} onChange={setCode} placeholder="Se genera solo si lo dejás vacío" />
         <Field
           label={type === "flight" ? "Aeropuerto para Maps (cómo llegar)" : "Dirección para Maps"}
@@ -1236,6 +1361,35 @@ const KNOWN_META_LABELS = {
   activity: ["Hora", "Duración", "Punto de encuentro"],
 };
 
+/* Editor de "otros detalles": antes era un único input que se reseteaba
+   cada vez que se reabría el formulario de edición, así que cualquier
+   detalle custom (ej. "Terminal para taxis") parecía desaparecer o se
+   duplicaba/mezclaba con otro campo si se lo volvía a tipear. Ahora es una
+   lista editable que se precarga con lo que ya estaba guardado. */
+function CustomFieldsEditor({ fields, onChange }) {
+  const addField = () => onChange([...fields, { key: `custom-${Date.now()}`, label: "", value: "" }]);
+  const updateField = (key, prop, val) => onChange(fields.map((f) => (f.key === key ? { ...f, [prop]: val } : f)));
+  const removeField = (key) => onChange(fields.filter((f) => f.key !== key));
+
+  return (
+    <div className="flex flex-col gap-2">
+      <label className="block text-[10px] uppercase" style={{ color: C.inkSoft }}>Otros detalles (opcional)</label>
+      {fields.map((f) => (
+        <div key={f.key} className="flex gap-2 items-end">
+          <Field label="Etiqueta" value={f.label} onChange={(v) => updateField(f.key, "label", v)} placeholder="Ej: Terminal para taxis" />
+          <Field label="Valor" value={f.value} onChange={(v) => updateField(f.key, "value", v)} placeholder="Ej: Terminal 2" />
+          <button onClick={() => removeField(f.key)} className="p-3 mb-0.5" style={{ color: "#B7391F" }} aria-label="Quitar detalle">
+            <X size={16} />
+          </button>
+        </div>
+      ))}
+      <button onClick={addField} className="flex items-center gap-1.5 text-[12px] font-semibold py-2 w-fit" style={{ color: C.copper }}>
+        <Plus size={13} /> Agregar otro detalle
+      </button>
+    </div>
+  );
+}
+
 /* ---------- EditItem: editar una reserva ya cargada ---------- */
 
 function EditItem({ item, day, onCancel, onSaved }) {
@@ -1244,8 +1398,11 @@ function EditItem({ item, day, onCancel, onSaved }) {
   const [title, setTitle] = useState(item.title || "");
   const [code, setCode] = useState(item.code || "");
   const [mapsQuery, setMapsQuery] = useState(item.maps_query || "");
-  const [extraLabel, setExtraLabel] = useState("");
-  const [extraValue, setExtraValue] = useState("");
+  const [customFields, setCustomFields] = useState(() =>
+    (item.meta || [])
+      .filter((m) => !(KNOWN_META_LABELS[item.type] || []).includes(m.label))
+      .map((m, i) => ({ key: `existing-${item.id}-${i}`, label: m.label, value: m.value }))
+  );
   const [attachmentUrl, setAttachmentUrl] = useState(item.attachment_url || "");
   const [file, setFile] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -1256,10 +1413,6 @@ function EditItem({ item, day, onCancel, onSaved }) {
   const notify = (message, msgType = "error") => setToast({ message, type: msgType });
 
   const canSave = title.trim();
-
-  const leftoverMeta = (item.meta || []).filter(
-    (m) => !(KNOWN_META_LABELS[item.type] || []).includes(m.label)
-  );
 
   const submit = async () => {
     setSaving(true);
@@ -1275,8 +1428,9 @@ function EditItem({ item, day, onCancel, onSaved }) {
     }
 
     const meta = buildMeta();
-    leftoverMeta.forEach((m) => meta.push(m));
-    if (extraLabel && extraValue) meta.push({ label: extraLabel, value: extraValue });
+    customFields.forEach((cf) => {
+      if (cf.label.trim() && cf.value.trim()) meta.push({ label: cf.label.trim(), value: cf.value.trim() });
+    });
 
     const { error } = await supabase.from("trip_items").update({
       type, source: source || "Manual", title: title.trim(),
@@ -1395,10 +1549,7 @@ function EditItem({ item, day, onCancel, onSaved }) {
           </div>
         )}
 
-        <div className="flex gap-2">
-          <Field label="Otro detalle (opcional)" value={extraLabel} onChange={setExtraLabel} placeholder="Etiqueta" />
-          <Field label="Valor" value={extraValue} onChange={setExtraValue} placeholder="Valor" />
-        </div>
+        <CustomFieldsEditor fields={customFields} onChange={setCustomFields} />
         <Field label="Código de reserva" value={code} onChange={setCode} placeholder={item.code} />
         <Field
           label={type === "flight" ? "Aeropuerto para Maps (cómo llegar)" : "Dirección para Maps"}
