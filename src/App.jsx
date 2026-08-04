@@ -1247,6 +1247,7 @@ function parseInitialFields(type, meta) {
 function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
   const [dayMode, setDayMode] = useState("existing");
   const [day, setDay] = useState(initialDay);
+  const [checkoutDay, setCheckoutDay] = useState(initialDay);
   const [newDate, setNewDate] = useState("");
   const [newCity, setNewCity] = useState("");
   const [type, setType] = useState("flight");
@@ -1265,18 +1266,39 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
 
   const canSave = title.trim() && (dayMode === "existing" || (newDate.trim() && newCity.trim()));
 
+  // Para "hotel" en modo día existente, la reserva se replica en todos los
+  // días entre el check-in y el check-out (inclusive), para que al entrar a
+  // cualquiera de esos días el alojamiento ya aparezca ahí, con las mismas
+  // fechas de check-in/check-out de la estadía completa (no una fecha por día).
+  const isMultiDayHotel = type === "hotel" && dayMode === "existing";
+
   const submit = async () => {
     setSaving(true);
-    let dayId;
-    if (dayMode === "existing") {
-      dayId = days.find((d) => d.day_number === day)?.id;
+    let dayIds = [];
+
+    if (isMultiDayHotel) {
+      const startNum = Math.min(day, checkoutDay);
+      const endNum = Math.max(day, checkoutDay);
+      dayIds = days
+        .filter((d) => d.day_number >= startNum && d.day_number <= endNum)
+        .sort((a, b) => a.day_number - b.day_number)
+        .map((d) => d.id);
+      if (dayIds.length === 0) {
+        notify("No encontré días en ese rango.");
+        setSaving(false);
+        return;
+      }
+    } else if (dayMode === "existing") {
+      const dayId = days.find((d) => d.day_number === day)?.id;
+      if (!dayId) { notify("No encontré ese día."); setSaving(false); return; }
+      dayIds = [dayId];
     } else {
       const nextNum = Math.max(0, ...days.map((d) => d.day_number)) + 1;
       const { data, error } = await supabase.from("trip_days")
         .insert({ trip_id: trip.id, day_number: nextNum, date_label: newDate.trim(), city: newCity.trim() })
         .select().single();
       if (error) { notify(error.message); setSaving(false); return; }
-      dayId = data.id;
+      dayIds = [data.id];
     }
 
     let finalAttachmentUrl = attachmentUrl.trim() || null;
@@ -1295,11 +1317,16 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
       if (cf.label.trim() && cf.value.trim()) meta.push({ label: cf.label.trim(), value: cf.value.trim() });
     });
 
-    const { error } = await supabase.from("trip_items").insert({
+    // Mismo código de reserva para todas las filas generadas, así quedan
+    // agrupadas como una sola reserva repartida en varios días.
+    const sharedCode = code || genCode();
+    const rows = dayIds.map((dayId) => ({
       day_id: dayId, type, source: source || "Manual", title: title.trim(),
-      meta, code: code || genCode(), maps_query: mapsQuery.trim(),
+      meta, code: sharedCode, maps_query: mapsQuery.trim(),
       voucher_label: "Ver reserva", attachment_url: finalAttachmentUrl,
-    });
+    }));
+
+    const { error } = await supabase.from("trip_items").insert(rows);
     setSaving(false);
     if (error) { notify(error.message); return; }
     onSaved();
@@ -1335,9 +1362,22 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
             <button onClick={() => setDayMode("new")} className="flex-1 text-[12px] font-semibold py-2 rounded-lg" style={{ background: dayMode === "new" ? C.copper : C.card, color: dayMode === "new" ? "#fff" : C.ink, border: `1px solid ${C.platinum}` }}>Día nuevo</button>
           </div>
           {dayMode === "existing" ? (
-            <select value={day} onChange={(e) => setDay(Number(e.target.value))} className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
-              {days.map((d) => <option key={d.day_number} value={d.day_number}>Día {d.day_number} · {d.date_label} · {d.city}</option>)}
-            </select>
+            <>
+              <select value={day} onChange={(e) => { const v = Number(e.target.value); setDay(v); if (type === "hotel" && checkoutDay < v) setCheckoutDay(v); }} className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
+                {days.map((d) => <option key={d.day_number} value={d.day_number}>Día {d.day_number} · {d.date_label} · {d.city}</option>)}
+              </select>
+              {type === "hotel" && (
+                <>
+                  <label className="block text-[10px] uppercase mt-2 mb-1" style={{ color: C.inkSoft }}>Hasta qué día (check-out)</label>
+                  <select value={checkoutDay} onChange={(e) => setCheckoutDay(Number(e.target.value))} className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
+                    {days.filter((d) => d.day_number >= day).map((d) => <option key={d.day_number} value={d.day_number}>Día {d.day_number} · {d.date_label} · {d.city}</option>)}
+                  </select>
+                  <p className="text-[10px] mt-1" style={{ color: C.inkSoft }}>
+                    El alojamiento va a aparecer en todos los días del {day} al {checkoutDay}, con el mismo check-in y check-out.
+                  </p>
+                </>
+              )}
+            </>
           ) : (
             <div className="flex gap-2">
               <input value={newDate} onChange={(e) => setNewDate(e.target.value)} placeholder="Fecha" className="flex-1 text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }} />
@@ -1393,8 +1433,8 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
         {type === "hotel" && (
           <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
             <div className="flex gap-2">
-              <Field label="Check-in" value={f.checkInDateTime} onChange={f.setCheckInDateTime} placeholder="15:00" />
-              <Field label="Check-out" value={f.checkOutDateTime} onChange={f.setCheckOutDateTime} placeholder="11:00" />
+              <Field label="Check-in" value={f.checkInDateTime} onChange={f.setCheckInDateTime} placeholder="4 ago, 15:00" />
+              <Field label="Check-out" value={f.checkOutDateTime} onChange={f.setCheckOutDateTime} placeholder="12 ago, 11:00" />
             </div>
             <Field label="Tipo de habitación (opcional)" value={f.roomType} onChange={f.setRoomType} placeholder="Doble con balcón" />
           </div>
@@ -1641,8 +1681,8 @@ function EditItem({ item, day, days, onCancel, onSaved }) {
         {type === "hotel" && (
           <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
             <div className="flex gap-2">
-              <Field label="Check-in" value={f.checkInDateTime} onChange={f.setCheckInDateTime} placeholder="15:00" />
-              <Field label="Check-out" value={f.checkOutDateTime} onChange={f.setCheckOutDateTime} placeholder="11:00" />
+              <Field label="Check-in" value={f.checkInDateTime} onChange={f.setCheckInDateTime} placeholder="4 ago, 15:00" />
+              <Field label="Check-out" value={f.checkOutDateTime} onChange={f.setCheckOutDateTime} placeholder="12 ago, 11:00" />
             </div>
             <Field label="Tipo de habitación (opcional)" value={f.roomType} onChange={f.setRoomType} placeholder="Doble con balcón" />
           </div>
