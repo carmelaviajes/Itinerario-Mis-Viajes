@@ -838,6 +838,7 @@ function TripView({ tripId, onBack }) {
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [viewingItem, setViewingItem] = useState(null);
@@ -891,6 +892,10 @@ function TripView({ tripId, onBack }) {
 
   if (showAdd) {
     return <AddItem trip={trip} days={days} initialDay={selectedDay} onCancel={() => setShowAdd(false)} onSaved={async () => { setShowAdd(false); await load(); }} />;
+  }
+
+  if (showImport) {
+    return <BulkImport trip={trip} days={days} onCancel={() => setShowImport(false)} onSaved={async () => { setShowImport(false); await load(); }} />;
   }
 
   if (editingItem) {
@@ -996,6 +1001,9 @@ function TripView({ tripId, onBack }) {
         )}
         <button onClick={() => setShowAdd(true)} disabled={offline} className="mt-4 w-full flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl disabled:opacity-40" style={{ background: C.wheat, color: C.ink }}>
           <Plus size={15} /> Agregar reserva
+        </button>
+        <button onClick={() => setShowImport(true)} disabled={offline} className="mt-2 w-full flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl disabled:opacity-40" style={{ background: C.card, color: C.ink, border: `1px dashed ${C.platinum}` }}>
+          <FileText size={15} /> Importar itinerario (JSON)
         </button>
         {offline ? (
           <div className="mt-4 flex items-center gap-2 text-[11px]" style={{ color: C.inkSoft }}>
@@ -1617,6 +1625,167 @@ function SelectField({ label, value, onChange, options }) {
         className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+    </div>
+  );
+}
+
+/* ---------- Importación masiva de itinerario ----------
+   Pega un JSON con la forma:
+   [
+     { "day_number": 1, "date_label": "Mié 5 ago", "city": "París",
+       "items": [
+         { "type": "activity", "source": "Manual", "title": "Torre Eiffel",
+           "code": "", "maps_query": "Torre Eiffel, Paris",
+           "meta": [ { "label": "Hora", "value": "14:15" } ] }
+       ]
+     }
+   ]
+   Tipos válidos: flight, hotel, transport, activity.
+   Si ya existe un día con el mismo day_number, se reutiliza (no se
+   duplica) y los items nuevos se agregan a los que ya tenga. */
+function BulkImport({ trip, days, onCancel, onSaved }) {
+  const EXAMPLE = `[
+  {
+    "day_number": 1,
+    "date_label": "Mié 5 ago",
+    "city": "París",
+    "items": [
+      {
+        "type": "activity",
+        "source": "Itinerario",
+        "title": "Torre Eiffel",
+        "code": "",
+        "maps_query": "Torre Eiffel, Paris",
+        "meta": [
+          { "label": "Hora", "value": "14:15" },
+          { "label": "Punto de encuentro", "value": "Jardines del Trocadéro" }
+        ]
+      }
+    ]
+  }
+]`;
+  const [raw, setRaw] = useState("");
+  const [parsed, setParsed] = useState(null);
+  const [parseError, setParseError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [toast, setToast] = useState(null);
+  const notify = (message, type = "error") => setToast({ message, type });
+
+  const doParse = () => {
+    setParseError("");
+    setParsed(null);
+    try {
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data)) throw new Error("El JSON debe ser un array de días.");
+      data.forEach((d, i) => {
+        if (typeof d.day_number !== "number") throw new Error(`Día #${i + 1}: falta "day_number" numérico.`);
+        if (!d.date_label) throw new Error(`Día #${i + 1}: falta "date_label".`);
+        if (!Array.isArray(d.items)) throw new Error(`Día #${i + 1}: falta el array "items".`);
+      });
+      setParsed(data);
+    } catch (e) {
+      setParseError(e.message || "JSON inválido.");
+    }
+  };
+
+  const totalItems = parsed ? parsed.reduce((acc, d) => acc + d.items.length, 0) : 0;
+
+  const runImport = async () => {
+    if (!parsed) return;
+    setImporting(true);
+    try {
+      for (const d of parsed) {
+        let dayId = days.find((x) => x.day_number === d.day_number)?.id;
+        if (!dayId) {
+          const { data: newDay, error: dayErr } = await supabase.from("trip_days")
+            .insert({ trip_id: trip.id, day_number: d.day_number, date_label: d.date_label.trim(), city: (d.city || "Sin definir").trim() })
+            .select().single();
+          if (dayErr) throw dayErr;
+          dayId = newDay.id;
+        }
+        if (d.items.length) {
+          const rows = d.items.map((it) => ({
+            day_id: dayId,
+            type: TYPE_STYLES[it.type] ? it.type : "activity",
+            source: it.source || "Itinerario",
+            title: (it.title || "Sin título").trim(),
+            meta: Array.isArray(it.meta) ? it.meta : [],
+            code: it.code || genCode(),
+            maps_query: it.maps_query || "",
+            voucher_label: "Ver reserva",
+            attachment_url: it.attachment_url || null,
+          }));
+          const { error: itemsErr } = await supabase.from("trip_items").insert(rows);
+          if (itemsErr) throw itemsErr;
+        }
+      }
+      setImporting(false);
+      onSaved();
+    } catch (e) {
+      setImporting(false);
+      notify(e.message || "No se pudo importar.");
+    }
+  };
+
+  return (
+    <div className="min-h-screen" style={{ background: C.bg }}>
+      <header className="px-5 pt-6 pb-4 flex items-center justify-between" style={{ borderBottom: `1px solid ${C.platinum}` }}>
+        <h1 className="text-[19px] font-bold" style={{ color: C.ink }}>Importar itinerario</h1>
+        <button onClick={onCancel} style={{ color: C.inkSoft }}><X size={20} /></button>
+      </header>
+
+      <main className="px-5 py-5 flex flex-col gap-4">
+        <p className="text-[12px]" style={{ color: C.inkSoft }}>
+          Pegá acá el JSON con los días y las reservas/actividades. Se crean los días que
+          falten (por <code>day_number</code>) y se agregan los items a los días existentes
+          sin borrar lo que ya cargaste.
+        </p>
+
+        <textarea
+          value={raw}
+          onChange={(e) => { setRaw(e.target.value); setParsed(null); setParseError(""); }}
+          placeholder={EXAMPLE}
+          rows={14}
+          className="w-full text-[12px] font-mono p-3 rounded-lg outline-none"
+          style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}
+        />
+
+        {parseError && (
+          <div className="flex items-start gap-2 text-[12px] p-3 rounded-lg" style={{ background: "#FBEAEA", color: "#8A2A2A" }}>
+            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" /> {parseError}
+          </div>
+        )}
+
+        {!parsed ? (
+          <button onClick={doParse} disabled={!raw.trim()} className="w-full text-[13px] font-semibold py-3 rounded-xl disabled:opacity-40" style={{ background: C.wheat, color: C.ink }}>
+            Previsualizar
+          </button>
+        ) : (
+          <>
+            <div className="flex flex-col gap-2 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+              <p className="text-[12px] font-semibold" style={{ color: C.ink }}>
+                {parsed.length} día(s) · {totalItems} reserva(s)/actividad(es)
+              </p>
+              {parsed.map((d) => (
+                <div key={d.day_number} className="text-[12px]" style={{ color: C.inkSoft }}>
+                  Día {d.day_number} · {d.date_label} · {d.city || "Sin definir"} — {d.items.length} item(s)
+                  {days.find((x) => x.day_number === d.day_number) && <span> (día ya existe, se agregan items)</span>}
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setParsed(null)} className="flex-1 text-[13px] font-semibold py-3 rounded-xl" style={{ background: C.card, color: C.ink, border: `1px solid ${C.platinum}` }}>
+                Volver a editar
+              </button>
+              <button onClick={runImport} disabled={importing} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl disabled:opacity-60" style={{ background: C.copper, color: "#fff" }}>
+                {importing ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Importar todo
+              </button>
+            </div>
+          </>
+        )}
+      </main>
+
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }
