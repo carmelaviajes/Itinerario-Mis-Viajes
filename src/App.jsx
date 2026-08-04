@@ -33,6 +33,25 @@ const TYPE_STYLES = {
 
 const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 
+/* Helpers para inferir la fecha de un día que todavía no existe como fila
+   en trip_days (por ejemplo, un día "del medio" de una estadía de hotel que
+   nunca se creó). Parseamos el date_label del día existente más cercano
+   (ej. "Mié 5 ago") y le sumamos/restamos la diferencia de day_number. */
+const MONTHS_ES = { ene: 0, feb: 1, mar: 2, abr: 3, may: 4, jun: 5, jul: 6, ago: 7, sep: 8, oct: 9, nov: 10, dic: 11 };
+const parseDateLabel = (label) => {
+  if (!label) return null;
+  const m = label.toLowerCase().match(/(\d{1,2})\s*(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)/);
+  if (!m) return null;
+  const day = parseInt(m[1], 10);
+  const month = MONTHS_ES[m[2]];
+  if (Number.isNaN(day) || month === undefined) return null;
+  return new Date(new Date().getFullYear(), month, day);
+};
+const fmtDateEs = (d) => {
+  const s = d.toLocaleDateString("es-AR", { weekday: "short", day: "numeric", month: "short" });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
 /* ---------- Identidad: fuente y logo ---------- */
 
 /* Fuente incrustada en base64: así el logotipo en script siempre carga en
@@ -1279,12 +1298,45 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
     if (isMultiDayHotel) {
       const startNum = Math.min(day, checkoutDay);
       const endNum = Math.max(day, checkoutDay);
-      dayIds = days
-        .filter((d) => d.day_number >= startNum && d.day_number <= endNum)
-        .sort((a, b) => a.day_number - b.day_number)
-        .map((d) => d.id);
+      dayIds = [];
+      const missingNums = [];
+
+      // Por cada número de día en el rango: si ya existe (incluso si por algún
+      // motivo hay más de una fila con ese day_number), usamos esa/s fila/s.
+      // Si no existe ninguna, la anotamos para crearla.
+      for (let n = startNum; n <= endNum; n++) {
+        const existing = days.filter((d) => d.day_number === n);
+        if (existing.length > 0) existing.forEach((d) => dayIds.push(d.id));
+        else missingNums.push(n);
+      }
+
+      // Creamos los días que faltaban en el rango, infiriendo su fecha real a
+      // partir del día existente más cercano (antes o después) y sumando la
+      // diferencia de días. Así el alojamiento no se "salta" ningún día
+      // aunque ese día todavía no se hubiera creado en el viaje.
+      for (const n of missingNums) {
+        let nearest = null, nearestDist = Infinity;
+        days.forEach((d) => {
+          const dist = Math.abs(d.day_number - n);
+          if (dist < nearestDist) { nearest = d; nearestDist = dist; }
+        });
+        let dateLabel = "";
+        const parsed = nearest ? parseDateLabel(nearest.date_label) : null;
+        if (parsed) {
+          const d2 = new Date(parsed);
+          d2.setDate(d2.getDate() + (n - nearest.day_number));
+          dateLabel = fmtDateEs(d2);
+        }
+        const cityGuess = nearest?.city || "Sin definir";
+        const { data, error } = await supabase.from("trip_days")
+          .insert({ trip_id: trip.id, day_number: n, date_label: dateLabel, city: cityGuess })
+          .select().single();
+        if (error) { notify(`No pude crear el día ${n}: ` + error.message); setSaving(false); return; }
+        dayIds.push(data.id);
+      }
+
       if (dayIds.length === 0) {
-        notify("No encontré días en ese rango.");
+        notify("No encontré ni pude crear días en ese rango.");
         setSaving(false);
         return;
       }
@@ -1373,7 +1425,7 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
                     {days.filter((d) => d.day_number >= day).map((d) => <option key={d.day_number} value={d.day_number}>Día {d.day_number} · {d.date_label} · {d.city}</option>)}
                   </select>
                   <p className="text-[10px] mt-1" style={{ color: C.inkSoft }}>
-                    El alojamiento va a aparecer en todos los días del {day} al {checkoutDay}, con el mismo check-in y check-out.
+                    El alojamiento va a aparecer en todos los días del {day} al {checkoutDay}, con el mismo check-in y check-out. Si alguno de esos días todavía no existe en el viaje, se crea automáticamente.
                   </p>
                 </>
               )}
