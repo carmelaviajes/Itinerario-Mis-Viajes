@@ -426,7 +426,10 @@ function AuthScreen() {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { display_name: displayName || email.split("@")[0] } },
+        options: {
+          data: { display_name: displayName || email.split("@")[0] },
+          emailRedirectTo: window.location.origin,
+        },
       });
       if (error) setError(error.message);
     } else {
@@ -737,6 +740,92 @@ function TicketCard({ item, onEdit, onView }) {
    espacio. Desde acá se puede editar, imprimir o "descargar" (el diálogo de
    impresión del navegador permite guardar como PDF sin depender de ninguna
    librería nueva), y también bajar un .txt plano como respaldo simple. */
+/* ---------- Estado del vuelo en tiempo real (aviationstack) ----------
+   Requiere una API key gratuita de https://aviationstack.com/ (plan free:
+   500 consultas/mes) guardada como variable de entorno VITE_AVIATIONSTACK_KEY
+   en Vercel. Si no está configurada, el bloque simplemente no se muestra. */
+const AVIATIONSTACK_KEY = (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_AVIATIONSTACK_KEY) || "";
+
+const FLIGHT_STATUS_LABELS = {
+  scheduled: { label: "Programado", color: "#1A657B" },
+  active: { label: "En vuelo", color: "#0A2C47" },
+  landed: { label: "Aterrizó", color: "#3E7A4E" },
+  cancelled: { label: "Cancelado", color: "#B7391F" },
+  incident: { label: "Incidente", color: "#B7391F" },
+  diverted: { label: "Desviado", color: "#B99B6B" },
+};
+
+function FlightStatus({ flightNumber }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const clean = (flightNumber || "").replace(/\s+/g, "").toUpperCase();
+
+  const fetchStatus = async () => {
+    if (!clean) return;
+    setLoading(true);
+    setError("");
+    setStatus(null);
+    try {
+      const res = await fetch(`https://api.aviationstack.com/v1/flights?access_key=${AVIATIONSTACK_KEY}&flight_iata=${encodeURIComponent(clean)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "No se pudo consultar el vuelo.");
+      const flight = (data.data || [])[0];
+      if (!flight) throw new Error("No se encontró información para este vuelo (puede que todavía no esté programado en el sistema, o que ya haya pasado hace mucho).");
+      setStatus(flight);
+    } catch (e) {
+      setError(e.message || "No se pudo consultar el estado del vuelo.");
+    }
+    setLoading(false);
+  };
+
+  if (!AVIATIONSTACK_KEY || !clean) return null;
+
+  const info = status && FLIGHT_STATUS_LABELS[status.flight_status];
+
+  return (
+    <div className="no-print flex flex-col gap-2 rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] uppercase tracking-wide" style={{ color: C.inkSoft }}>Estado del vuelo {clean}</span>
+        <button onClick={fetchStatus} disabled={loading} className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: C.copper }}>
+          {loading ? <Loader2 size={13} className="animate-spin" /> : <Plane size={13} />} {status ? "Actualizar" : "Consultar"}
+        </button>
+      </div>
+
+      {error && <p className="text-[12px]" style={{ color: "#B7391F" }}>{error}</p>}
+
+      {status && (
+        <div className="flex flex-col gap-2 mt-1">
+          {info && (
+            <span className="inline-flex w-fit items-center text-[11px] font-bold uppercase px-2.5 py-1 rounded-full text-white" style={{ background: info.color }}>
+              {info.label}
+            </span>
+          )}
+          <div className="flex gap-4">
+            <div>
+              <div className="text-[10px] uppercase" style={{ color: C.inkSoft }}>Salida</div>
+              <div className="text-[14px] font-bold font-mono" style={{ color: C.ink }}>
+                {status.departure?.estimated ? new Date(status.departure.estimated).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+              </div>
+              {status.departure?.terminal && <div className="text-[11px]" style={{ color: C.inkSoft }}>Terminal {status.departure.terminal}{status.departure.gate ? ` · Puerta ${status.departure.gate}` : ""}</div>}
+              {status.departure?.delay ? <div className="text-[11px]" style={{ color: "#B7391F" }}>Demora {status.departure.delay} min</div> : null}
+            </div>
+            <div>
+              <div className="text-[10px] uppercase" style={{ color: C.inkSoft }}>Llegada</div>
+              <div className="text-[14px] font-bold font-mono" style={{ color: C.ink }}>
+                {status.arrival?.estimated ? new Date(status.arrival.estimated).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}
+              </div>
+              {status.arrival?.terminal && <div className="text-[11px]" style={{ color: C.inkSoft }}>Terminal {status.arrival.terminal}{status.arrival.gate ? ` · Puerta ${status.arrival.gate}` : ""}</div>}
+              {status.arrival?.delay ? <div className="text-[11px]" style={{ color: "#B7391F" }}>Demora {status.arrival.delay} min</div> : null}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TicketDetailModal({ item, day, onClose, onEdit }) {
   const style = TYPE_STYLES[item.type];
   const Icon = style.icon;
@@ -796,6 +885,10 @@ function TicketDetailModal({ item, day, onClose, onEdit }) {
               </div>
             ))}
           </div>
+        )}
+
+        {item.type === "flight" && (
+          <FlightStatus flightNumber={(item.meta || []).find((m) => m.label === "Número de vuelo")?.value} />
         )}
 
         <div className="flex flex-col gap-2 rounded-xl p-4" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
@@ -902,7 +995,8 @@ function TripView({ tripId, onBack }) {
     return (
       <EditItem
         item={editingItem}
-        day={dayData}
+        day={days.find((d) => d.id === editingItem.day_id) || dayData}
+        days={days}
         onCancel={() => setEditingItem(null)}
         onSaved={async () => { setEditingItem(null); await load(); }}
       />
@@ -1034,6 +1128,7 @@ function TripView({ tripId, onBack }) {
    necesita cambios: ya sabe renderizar cualquier lista de meta. */
 function useTypeFields(type, initial = {}) {
   const [airline, setAirline] = useState(initial.airline || "");
+  const [flightNumber, setFlightNumber] = useState(initial.flightNumber || "");
   const [departureAirport, setDepartureAirport] = useState(initial.departureAirport || "");
   const [departureTerminal, setDepartureTerminal] = useState(initial.departureTerminal || "");
   const [departureTime, setDepartureTime] = useState(initial.departureTime || "");
@@ -1062,6 +1157,7 @@ function useTypeFields(type, initial = {}) {
     const meta = [];
     if (type === "flight") {
       if (airline) meta.push({ label: "Aerolínea", value: airline });
+      if (flightNumber) meta.push({ label: "Número de vuelo", value: flightNumber });
       if (departureAirport) meta.push({ label: "Aeropuerto de salida", value: departureAirport });
       if (departureTerminal) meta.push({ label: "Terminal de salida", value: departureTerminal });
       if (departureTime) meta.push({ label: "Hora de salida", value: departureTime });
@@ -1094,7 +1190,7 @@ function useTypeFields(type, initial = {}) {
 
   return {
     fields: {
-      airline, setAirline,
+      airline, setAirline, flightNumber, setFlightNumber,
       departureAirport, setDepartureAirport, departureTerminal, setDepartureTerminal,
       departureTime, setDepartureTime,
       arrivalAirport, setArrivalAirport, arrivalTerminal, setArrivalTerminal,
@@ -1116,6 +1212,7 @@ function parseInitialFields(type, meta) {
   const initial = {};
   if (type === "flight") {
     initial.airline = byLabel["Aerolínea"] || "";
+    initial.flightNumber = byLabel["Número de vuelo"] || "";
     initial.departureAirport = byLabel["Aeropuerto de salida"] || "";
     initial.departureTerminal = byLabel["Terminal de salida"] || "";
     initial.departureTime = byLabel["Hora de salida"] || byLabel["Salida"] || "";
@@ -1254,7 +1351,10 @@ function AddItem({ trip, days, initialDay, onCancel, onSaved }) {
 
         {type === "flight" && (
           <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
-            <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
+            <div className="flex gap-2">
+              <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
+              <Field label="Número de vuelo" value={f.flightNumber} onChange={f.setFlightNumber} placeholder="IB5674" />
+            </div>
             <div className="flex gap-2">
               <Field label="Aeropuerto de salida" value={f.departureAirport} onChange={f.setDepartureAirport} placeholder="Ezeiza (EZE)" />
               <Field label="Terminal de salida" value={f.departureTerminal} onChange={f.setDepartureTerminal} placeholder="Terminal A" />
@@ -1361,7 +1461,7 @@ function Field({ label, value, onChange, placeholder }) {
    Cualquier otra etiqueta que ya estuviera guardada (ej. "Otro detalle" viejo)
    se conserva tal cual al editar, en vez de perderse. */
 const KNOWN_META_LABELS = {
-  flight: ["Aerolínea", "Aeropuerto de salida", "Terminal de salida", "Hora de salida", "Salida",
+  flight: ["Aerolínea", "Número de vuelo", "Aeropuerto de salida", "Terminal de salida", "Hora de salida", "Salida",
     "Aeropuerto de llegada", "Terminal de llegada", "Fecha de llegada", "Hora de llegada", "Llegada",
     "Embarque", "Escalas", "Equipaje incluido", "Check-in"],
   hotel: ["Check-in", "Check-out", "Habitación"],
@@ -1400,8 +1500,9 @@ function CustomFieldsEditor({ fields, onChange }) {
 
 /* ---------- EditItem: editar una reserva ya cargada ---------- */
 
-function EditItem({ item, day, onCancel, onSaved }) {
+function EditItem({ item, day, days, onCancel, onSaved }) {
   const [type, setType] = useState(item.type);
+  const [dayId, setDayId] = useState(item.day_id);
   const [source, setSource] = useState(item.source || "");
   const [title, setTitle] = useState(item.title || "");
   const [code, setCode] = useState(item.code || "");
@@ -1441,7 +1542,7 @@ function EditItem({ item, day, onCancel, onSaved }) {
     });
 
     const { error } = await supabase.from("trip_items").update({
-      type, source: source || "Manual", title: title.trim(),
+      type, day_id: dayId, source: source || "Manual", title: title.trim(),
       meta, code: code.trim() || item.code, maps_query: mapsQuery.trim(),
       attachment_url: finalAttachmentUrl,
     }).eq("id", item.id);
@@ -1464,7 +1565,15 @@ function EditItem({ item, day, onCancel, onSaved }) {
       </header>
 
       <main className="px-5 py-5 flex flex-col gap-4">
-        {day && (
+        {days && days.length > 0 ? (
+          <div>
+            <label className="block text-[10px] uppercase mb-2" style={{ color: C.inkSoft }}>Día</label>
+            <select value={dayId} onChange={(e) => setDayId(e.target.value)}
+              className="w-full text-[14px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }}>
+              {days.map((d) => <option key={d.id} value={d.id}>Día {d.day_number} · {d.date_label} · {d.city}</option>)}
+            </select>
+          </div>
+        ) : day && (
           <p className="text-[11px]" style={{ color: C.inkSoft }}>
             Día {day.day_number} · {day.date_label} · {day.city}
           </p>
@@ -1490,7 +1599,10 @@ function EditItem({ item, day, onCancel, onSaved }) {
 
         {type === "flight" && (
           <div className="flex flex-col gap-3 p-3 rounded-lg" style={{ background: C.card, border: `1px solid ${C.platinum}` }}>
-            <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
+            <div className="flex gap-2">
+              <Field label="Aerolínea" value={f.airline} onChange={f.setAirline} placeholder="Aerolíneas Argentinas" />
+              <Field label="Número de vuelo" value={f.flightNumber} onChange={f.setFlightNumber} placeholder="IB5674" />
+            </div>
             <div className="flex gap-2">
               <Field label="Aeropuerto de salida" value={f.departureAirport} onChange={f.setDepartureAirport} placeholder="Ezeiza (EZE)" />
               <Field label="Terminal de salida" value={f.departureTerminal} onChange={f.setDepartureTerminal} placeholder="Terminal A" />
@@ -1669,6 +1781,11 @@ function BulkImport({ trip, days, onCancel, onSaved }) {
   const [parseError, setParseError] = useState("");
   const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState(null);
+  const [lastBatch, setLastBatch] = useState(null); // { itemIds, newDayIds } de la última importación
+  const [undoing, setUndoing] = useState(false);
+  const [removeSource, setRemoveSource] = useState("Itinerario");
+  const [confirmRemoveSource, setConfirmRemoveSource] = useState(false);
+  const [removingSource, setRemovingSource] = useState(false);
   const notify = (message, type = "error") => setToast({ message, type });
 
   const doParse = () => {
@@ -1693,6 +1810,8 @@ function BulkImport({ trip, days, onCancel, onSaved }) {
   const runImport = async () => {
     if (!parsed) return;
     setImporting(true);
+    const insertedItemIds = [];
+    const newDayIds = [];
     try {
       for (const d of parsed) {
         let dayId = days.find((x) => x.day_number === d.day_number)?.id;
@@ -1702,6 +1821,7 @@ function BulkImport({ trip, days, onCancel, onSaved }) {
             .select().single();
           if (dayErr) throw dayErr;
           dayId = newDay.id;
+          newDayIds.push(dayId);
         }
         if (d.items.length) {
           const rows = d.items.map((it) => ({
@@ -1715,15 +1835,57 @@ function BulkImport({ trip, days, onCancel, onSaved }) {
             voucher_label: "Ver reserva",
             attachment_url: it.attachment_url || null,
           }));
-          const { error: itemsErr } = await supabase.from("trip_items").insert(rows);
+          const { data: insertedRows, error: itemsErr } = await supabase.from("trip_items").insert(rows).select("id");
           if (itemsErr) throw itemsErr;
+          (insertedRows || []).forEach((r) => insertedItemIds.push(r.id));
         }
       }
       setImporting(false);
-      onSaved();
+      setLastBatch({ itemIds: insertedItemIds, newDayIds, dayCount: parsed.length, itemCount: insertedItemIds.length });
+      notify(`Se importaron ${insertedItemIds.length} reserva(s)/actividad(es) en ${parsed.length} día(s).`, "success");
     } catch (e) {
       setImporting(false);
       notify(e.message || "No se pudo importar.");
+    }
+  };
+
+  const undoLastBatch = async () => {
+    if (!lastBatch) return;
+    setUndoing(true);
+    try {
+      if (lastBatch.itemIds.length) {
+        const { error: delItemsErr } = await supabase.from("trip_items").delete().in("id", lastBatch.itemIds);
+        if (delItemsErr) throw delItemsErr;
+      }
+      for (const dId of lastBatch.newDayIds) {
+        const { count } = await supabase.from("trip_items").select("id", { count: "exact", head: true }).eq("day_id", dId);
+        if (!count) await supabase.from("trip_days").delete().eq("id", dId);
+      }
+      setUndoing(false);
+      setLastBatch(null);
+      notify("Se deshizo la última importación.", "success");
+      onSaved();
+    } catch (e) {
+      setUndoing(false);
+      notify(e.message || "No se pudo deshacer la importación.");
+    }
+  };
+
+  const removeBySource = async () => {
+    setRemovingSource(true);
+    try {
+      const { data: tripDays, error: daysErr } = await supabase.from("trip_days").select("id").eq("trip_id", trip.id);
+      if (daysErr) throw daysErr;
+      const dayIds = (tripDays || []).map((d) => d.id);
+      const { error } = await supabase.from("trip_items").delete().eq("source", removeSource.trim()).in("day_id", dayIds.length ? dayIds : ["00000000-0000-0000-0000-000000000000"]);
+      if (error) throw error;
+      setRemovingSource(false);
+      setConfirmRemoveSource(false);
+      notify(`Se eliminaron los items con fuente "${removeSource.trim()}".`, "success");
+      onSaved();
+    } catch (e) {
+      setRemovingSource(false);
+      notify(e.message || "No se pudo eliminar.");
     }
   };
 
@@ -1756,7 +1918,25 @@ function BulkImport({ trip, days, onCancel, onSaved }) {
           </div>
         )}
 
-        {!parsed ? (
+        {lastBatch ? (
+          <div className="flex flex-col gap-2 p-3 rounded-lg" style={{ background: C.wheat, border: `1px solid ${C.platinum}` }}>
+            <p className="text-[12px] font-semibold" style={{ color: C.ink }}>
+              Se importaron {lastBatch.itemCount} item(s) en {lastBatch.dayCount} día(s).
+            </p>
+            <p className="text-[11px]" style={{ color: C.inkSoft }}>
+              Si algo quedó en el día equivocado, tocá el ícono de lápiz de esa reserva
+              y cambiá el campo "Día". Si preferís deshacer toda esta importación, usá el botón de abajo.
+            </p>
+            <div className="flex gap-2 mt-1">
+              <button onClick={undoLastBatch} disabled={undoing} className="flex-1 flex items-center justify-center gap-1.5 text-[13px] font-semibold py-3 rounded-xl disabled:opacity-60" style={{ background: "#FBEAEA", color: "#8A2A2A" }}>
+                {undoing ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />} Deshacer esta importación
+              </button>
+              <button onClick={() => { setLastBatch(null); setRaw(""); setParsed(null); onSaved(); }} className="flex-1 text-[13px] font-semibold py-3 rounded-xl" style={{ background: C.copper, color: "#fff" }}>
+                Listo, volver al viaje
+              </button>
+            </div>
+          </div>
+        ) : !parsed ? (
           <button onClick={doParse} disabled={!raw.trim()} className="w-full text-[13px] font-semibold py-3 rounded-xl disabled:opacity-40" style={{ background: C.wheat, color: C.ink }}>
             Previsualizar
           </button>
@@ -1783,7 +1963,34 @@ function BulkImport({ trip, days, onCancel, onSaved }) {
             </div>
           </>
         )}
+
+        {!lastBatch && (
+          <div className="mt-4 pt-4 flex flex-col gap-2" style={{ borderTop: `1px dashed ${C.platinum}` }}>
+            <p className="text-[11px] font-semibold uppercase" style={{ color: C.inkSoft }}>Borrar una importación anterior</p>
+            <p className="text-[11px]" style={{ color: C.inkSoft }}>
+              Esto elimina todas las reservas/actividades cuya "fuente" coincida con el texto de abajo
+              (por defecto, todo lo que se cargó como "Itinerario"). Los días no se borran.
+            </p>
+            <div className="flex gap-2">
+              <input value={removeSource} onChange={(e) => setRemoveSource(e.target.value)} placeholder="Itinerario"
+                className="flex-1 text-[13px] p-3 rounded-lg outline-none" style={{ background: C.card, border: `1px solid ${C.platinum}`, color: C.ink }} />
+              <button onClick={() => setConfirmRemoveSource(true)} disabled={!removeSource.trim()} className="flex items-center gap-1.5 text-[13px] font-semibold px-4 py-3 rounded-xl disabled:opacity-40" style={{ background: "#FBEAEA", color: "#8A2A2A" }}>
+                <Trash2 size={14} /> Borrar
+              </button>
+            </div>
+          </div>
+        )}
       </main>
+
+      <ConfirmModal
+        open={confirmRemoveSource}
+        title="Borrar items importados"
+        message={`¿Seguro que querés eliminar todas las reservas/actividades con fuente "${removeSource.trim()}" en este viaje? Esta acción no se puede deshacer.`}
+        confirmLabel={removingSource ? "Eliminando..." : "Eliminar"}
+        danger
+        onCancel={() => setConfirmRemoveSource(false)}
+        onConfirm={removeBySource}
+      />
 
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
